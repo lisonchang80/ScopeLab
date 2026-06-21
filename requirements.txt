@@ -1,0 +1,6 @@
+# LabelScope — 影像辨識標註工作台
+# 與 ClinScope 共用同一套 Gradio 版本，外觀／行為一致。
+gradio==6.17.3
+pillow>=10.0
+numpy>=1.24
+PyYAML>=6.0
