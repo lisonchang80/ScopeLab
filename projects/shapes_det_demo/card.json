@@ -1,0 +1,14 @@
+{
+  "slug": "shapes_det_demo",
+  "name": "形狀偵測示範",
+  "discipline": "示範",
+  "task": "det",
+  "classes": ["圓形", "方形", "三角形"],
+  "author": "LabelScope",
+  "version": "0.1.0",
+  "license": "CC0",
+  "description": "內建偵測示範：在影像上畫框標出形狀，展示全螢幕標註器與 YOLO/COCO 匯出。",
+  "source_folder": "D:\\Claude code\\LabelScope\\samples\\shapes",
+  "created": "2026-06-22",
+  "updated": "2026-06-22"
+}
