@@ -504,22 +504,52 @@ def on_export_open(S):
         raise gr.Error("尚未載入影像。")
     if not S["classes"]:
         raise gr.Error("尚未定義任何類別（在基本資料填寫，或用分頁的「＋」新增）。")
+    S["_ovw_fmt"] = None  # 清掉上次的覆蓋確認狀態
     fmts = export_formats(S["task"])
     return (gr.update(visible=True),
-            gr.update(choices=fmts, value=fmts[0][1]))
+            gr.update(choices=fmts, value=fmts[0][1]),
+            gr.update(value="", visible=False),     # 警告區清空
+            gr.update(value="開始匯出"))            # 按鈕還原
+
+
+def on_export_fmt_change(fmt, S):
+    """切換格式 → 取消尚未確認的覆蓋、收起警告、還原按鈕。"""
+    S["_ovw_fmt"] = None
+    return (gr.update(value="", visible=False),
+            gr.update(value="開始匯出"))
 
 
 def on_export_confirm(fmt, S):
     if not S.get("slug"):
         raise gr.Error("請先儲存專案再匯出。")
+
+    # 重複匯出：目的地已存在且尚未針對此格式確認 → 先提示，要求再按一次確認
+    if exporter.already_exists(S["slug"], fmt) and S.get("_ovw_fmt") != fmt:
+        S["_ovw_fmt"] = fmt
+        dest = exporter.dest_for(S["slug"], fmt)
+        warn = (f'⚠️ 已存在舊的匯出 <code>{dest.name}</code>，'
+                '再次匯出會<b>整個覆蓋</b>它（舊內容會被刪除）。<br>確定要覆蓋嗎？')
+        return (gr.update(),                          # modal 保持開啟
+                gr.update(),                          # 下載檔不變
+                gr.update(value=warn, visible=True),  # 顯示警告
+                gr.update(value="⚠️ 覆蓋並匯出"))     # 按鈕轉為確認
+
+    # 執行匯出（本來就不存在，或使用者已確認覆蓋）
+    S["_ovw_fmt"] = None
     card = store.load_card(S["slug"]) or store.blank_card()
     card["classes"] = S["classes"]
-    path, stats, is_zip = exporter.run(S["slug"], card, S["files"], S["labels"], S["edits"], fmt)
+    try:
+        path, stats, is_zip = exporter.run(
+            S["slug"], card, S["files"], S["labels"], S["edits"], fmt)
+    except Exception as e:  # 占用/權限等 → 乾淨的錯誤提示，不讓 handler 崩潰
+        raise gr.Error(f"匯出失敗：{e}")
     gr.Info(f"✅ 匯出完成：{stats.get('images',0)} 張"
             + (f" · {stats.get('boxes',0)} 框" if "boxes" in stats else "")
             + f" → {path}")
-    return (gr.update(visible=False),
-            gr.update(value=path, visible=is_zip))
+    return (gr.update(visible=False),               # 關閉 modal
+            gr.update(value=path, visible=is_zip),  # 下載
+            gr.update(value="", visible=False),     # 清警告
+            gr.update(value="開始匯出"))            # 按鈕還原
 
 
 # ============================================================================
@@ -702,6 +732,11 @@ footer{display:none!important;}
   display:flex!important; align-items:center; gap:8px; box-shadow:none!important; margin:0!important;}
 .ls-fmt label:has(input:checked){background:var(--lemon-soft)!important; border-color:var(--navy-500)!important;
   box-shadow:inset 3px 0 0 var(--lemon)!important;}
+.ls-modal-warn{border:1.5px solid #E8B84B!important; background:#FFF7E0!important;
+  border-radius:9px!important; padding:9px 12px!important; color:#7A5A12!important;
+  font-size:13px!important; line-height:1.5!important;}
+.ls-modal-warn code{background:#fff; border:1px solid #E8C77A; border-radius:5px;
+  padding:1px 5px; font-size:12px;}
 .ls-modal-actions{gap:10px!important; justify-content:flex-end!important;}
 
 .foot{text-align:center; color:var(--muted); font-size:11px; margin-top:4px;
@@ -1214,6 +1249,7 @@ def build():
                 gr.HTML('<div class="ls-modal-title">💾 匯出資料集</div>')
                 export_fmt = gr.Radio(export_formats(S0["task"]), value=export_formats(S0["task"])[0][1],
                                       show_label=False, elem_classes="ls-fmt")
+                export_warn = gr.HTML("", visible=False, elem_classes="ls-modal-warn")
                 with gr.Row(elem_classes="ls-modal-actions"):
                     export_cancel = gr.Button("取消", elem_classes="tbtn", scale=0)
                     export_ok = gr.Button("開始匯出", elem_classes="tbtn accent", scale=0)
@@ -1240,9 +1276,11 @@ def build():
         gallery.select(on_gallery_select, [S], [S, *PV])
         bridge_btn.click(on_bridge, [bridge, S], BRIDGE_OUT).then(None, None, None, js=POST_BRIDGE_JS)
 
-        export_btn.click(on_export_open, [S], [export_modal, export_fmt])
+        export_btn.click(on_export_open, [S], [export_modal, export_fmt, export_warn, export_ok])
+        export_fmt.change(on_export_fmt_change, [export_fmt, S], [export_warn, export_ok])
         export_cancel.click(lambda: gr.update(visible=False), None, [export_modal])
-        export_ok.click(on_export_confirm, [export_fmt, S], [export_modal, export_file])
+        export_ok.click(on_export_confirm, [export_fmt, S],
+                        [export_modal, export_file, export_warn, export_ok])
 
         # 初始渲染：讓 gallery / detail 都先掛載，再依檢視模式收起其一
         demo.load(lambda s: render4(s), [S], R4)

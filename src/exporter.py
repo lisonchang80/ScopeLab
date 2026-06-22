@@ -14,8 +14,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import stat
 from pathlib import Path
 
 import yaml
@@ -26,17 +28,67 @@ from .imaging import display_path
 
 EXPORTS = store.ROOT / "exports"
 
+# 每個匯出格式落地的資料夾後綴（同一 tag 的格式共用一個資料夾）
+FMT_TAG = {
+    "cls_folder": "imagefolder",
+    "cls_zip": "imagefolder",
+    "det_yolo": "yolo",
+    "det_zip": "yolo",
+    "det_coco": "coco",
+}
+
 
 def _safe(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*]+', "_", str(name)).strip() or "_"
+
+
+def dest_for(slug: str, fmt: str) -> Path | None:
+    """該 (slug, 格式) 預期輸出的資料夾路徑（不建立）。未知格式回 None。"""
+    tag = FMT_TAG.get(fmt)
+    return (EXPORTS / f"{slug}__{tag}") if tag else None
+
+
+def already_exists(slug: str, fmt: str) -> bool:
+    """該格式是否已有舊匯出（資料夾或對應 .zip）。"""
+    d = dest_for(slug, fmt)
+    if d is None:
+        return False
+    if d.exists():
+        return True
+    if fmt.endswith("_zip") and Path(str(d) + ".zip").exists():
+        return True
+    return False
+
+
+def _force_rmtree(path: Path):
+    """健壯刪除：清掉唯讀旗標後重試（Windows 常見）。"""
+    def _onerror(func, p, _exc):
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except Exception:
+            pass
+    for _ in range(3):
+        if not path.exists():
+            return
+        try:
+            shutil.rmtree(path, onexc=lambda f, p, e: _onerror(f, p, e))
+        except TypeError:  # Python < 3.12 沒有 onexc
+            shutil.rmtree(path, onerror=_onerror)
 
 
 def _fresh(slug: str, tag: str) -> Path:
     EXPORTS.mkdir(exist_ok=True)
     out = EXPORTS / f"{slug}__{tag}"
     if out.exists():
-        shutil.rmtree(out, ignore_errors=True)
-    out.mkdir(parents=True)
+        _force_rmtree(out)
+        if out.exists():
+            # Windows：資料夾被占用（在檔案總管開著／檔案被其他程式鎖住）
+            raise RuntimeError(
+                f"無法覆蓋舊匯出資料夾：{out}\n"
+                "可能它正在檔案總管中開啟，或裡面有檔案被其他程式占用。"
+                "請關閉後再試一次。")
+    out.mkdir(parents=True, exist_ok=True)
     return out
 
 
