@@ -1,7 +1,9 @@
-"""ScopeLab — 推論分頁 UI（cls + det 統一）。
+"""ScopeLab — 推論分頁 UI（cls + det，三視窗外觀比照 ClinScope）。
 
-選專案 → 選一個訓練結果 run（best.pt）→ 拖入影像 → ▶ 推論。
-依 run 的 model_card.task 分派：cls → 機率表；det → 已畫框的影像圖庫 + 偵測摘要。
+版面同 ClinScope 推論工作台：
+  上排  模型 MODEL（專案 + 訓練結果 run + 識別卡）｜顯示 DISPLAY（預覽選取的結果圖）
+  下排  結果 RESULT（拖入影像 → ▶ 批次推論 → 縮圖牆 + 明細表，點縮圖即在上方預覽）
+依 run 的 model_card.task 分派：cls → 機率；det → 已畫框影像。
 torch / 推論引擎只在 handler 內惰性 import；store 輕量、建頁時 import。
 """
 from __future__ import annotations
@@ -15,6 +17,11 @@ import gradio as gr
 from .. import store
 
 
+def _phead(tag, en, sub):     # 比照 app.panel_head（避免 infer→app 循環 import，這裡複製）
+    return (f'<div class="phead"><div><span class="ph-tag">{tag}</span>'
+            f'<span class="ph-en">{en}</span></div><span class="ph-sub">{sub}</span></div>')
+
+
 def _all_projects():
     out = []
     for c in store.list_projects():
@@ -24,7 +31,6 @@ def _all_projects():
 
 
 def _runs(slug):
-    """列出該專案 runs/ 下含 best.pt 的訓練結果，標籤帶 acc/mAP50 + arch。"""
     if not slug:
         return []
     d = store.project_dir(slug) / "runs"
@@ -40,19 +46,33 @@ def _runs(slug):
         if mc.is_file():
             try:
                 c = json.loads(mc.read_text(encoding="utf-8"))
-                if c.get("task") == "det":
-                    tag = f" · mAP50 {c.get('best_map50', '?')} · {c.get('arch', '')}"
-                else:
-                    tag = f" · acc {c.get('best_val_acc', '?')} · {c.get('arch', '')}"
+                tag = (f" · mAP50 {c.get('best_map50', '?')}" if c.get("task") == "det"
+                       else f" · acc {c.get('best_val_acc', '?')}") + f" · {c.get('arch', '')}"
             except Exception:
                 pass
         out.append((f"{r.name}{tag}", str(w)))
     return out
 
 
-def _run_task(weights_path: str) -> str:
-    mc = Path(weights_path).parent / "model_card.json"
-    if mc.is_file():
+def _card(weights):
+    mc = Path(weights).parent / "model_card.json" if weights else None
+    if not mc or not mc.is_file():
+        return ""
+    try:
+        c = json.loads(mc.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    det = c.get("task") == "det"
+    score = (f"mAP50 **{c.get('best_map50', '?')}**" if det else f"val acc **{c.get('best_val_acc', '?')}**")
+    return (f"**{c.get('name', '')}** · {'偵測' if det else '分類'} · {score}  \n"
+            f"引擎 {c.get('engine', '')} · {c.get('arch', '')}  \n"
+            f"類別（{len(c.get('classes', []))}）：{'、'.join(c.get('classes', []))}  \n"
+            f"訓練 {c.get('trained_at', '')}")
+
+
+def _run_task(weights):
+    mc = Path(weights).parent / "model_card.json" if weights else None
+    if mc and mc.is_file():
         try:
             return json.loads(mc.read_text(encoding="utf-8")).get("task", "cls")
         except Exception:
@@ -60,7 +80,7 @@ def _run_task(weights_path: str) -> str:
     return "cls"
 
 
-def _cls_table(res: list[dict]) -> str:
+def _cls_table(res):
     rows = []
     for r in res:
         name = html.escape(Path(r["path"]).name)
@@ -71,37 +91,72 @@ def _cls_table(res: list[dict]) -> str:
         t3 = "　".join(f"{html.escape(c)} {p * 100:.0f}%" for c, p in r["top"])
         rows.append(f"<tr><td>{name}</td><td><b>{html.escape(pred)}</b></td>"
                     f"<td>{conf * 100:.1f}%</td><td class='infer-top'>{t3}</td></tr>")
-    return ("<table class='infer-tbl'><thead><tr><th>影像</th><th>預測</th>"
-            "<th>信心</th><th>Top-3</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
+    return ("<table class='infer-tbl'><thead><tr><th>影像</th><th>預測</th><th>信心</th>"
+            "<th>Top-3</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
 
 
-def _det_caption(r: dict) -> str:
-    name = Path(r["path"]).name
+def _det_table(res):
+    rows = []
+    for r in res:
+        name = html.escape(Path(r["path"]).name)
+        if not r["dets"]:
+            rows.append(f"<tr><td>{name}</td><td>0</td><td>（無偵測）</td></tr>")
+            continue
+        tops = "　".join(f"{html.escape(n)} {c * 100:.0f}%" for n, c in r["dets"][:6])
+        rows.append(f"<tr><td>{name}</td><td><b>{len(r['dets'])}</b></td><td class='infer-top'>{tops}</td></tr>")
+    return ("<table class='infer-tbl'><thead><tr><th>影像</th><th>框數</th>"
+            "<th>偵測（前幾項）</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
+
+
+def _cls_meta(r):
+    if not r.get("ok"):
+        return "讀取失敗"
+    return "　".join(f"**{html.escape(c)}** {p * 100:.0f}%" for c, p in r["top"])
+
+
+def _det_meta(r):
     if not r["dets"]:
-        return f"{name}：（無偵測）"
-    tops = "，".join(f"{n} {c * 100:.0f}%" for n, c in r["dets"][:5])
-    return f"{name}：{len(r['dets'])} 框 · {tops}"
+        return "（無偵測）"
+    return f"{len(r['dets'])} 框：" + "　".join(f"{html.escape(n)} {c * 100:.0f}%" for n, c in r["dets"][:8])
 
 
 def build_infer_tab():
-    with gr.Column(elem_classes="ls-panel"):
-        gr.HTML('<div class="ls-modal-title">🔍 推論　INFER</div>')
-        with gr.Row(elem_classes="inforow"):
-            proj_dd = gr.Dropdown(_all_projects(), value=None, label="專案（分類 / 偵測）",
-                                  filterable=False, scale=3)
-            run_dd = gr.Dropdown([], label="訓練結果（run）", filterable=False, scale=4)
-            refresh_btn = gr.Button("🔄", elem_classes="tbtn", scale=0, min_width=48)
-        files = gr.File(file_count="multiple", type="filepath", file_types=["image"],
-                        label="拖入 / 選擇要預測的影像（可多張）")
-        infer_btn = gr.Button("▶ 推論", elem_classes="tbtn accent")
-        result_html = gr.HTML("")
-        result_gallery = gr.Gallery(visible=False, show_label=False, columns=3,
-                                    object_fit="contain", elem_classes="grid")
+    res_state = gr.State([])
+
+    with gr.Row(equal_height=False, elem_classes="toprow"):
+        with gr.Column(scale=5, elem_classes="ls-panel"):
+            gr.HTML(_phead("模型", "MODEL", "選專案與訓練結果（run）"))
+            with gr.Row(elem_classes="inforow"):
+                proj_dd = gr.Dropdown(_all_projects(), value=None, label="專案（分類 / 偵測）",
+                                      filterable=False, scale=3)
+                refresh_btn = gr.Button("🔄", elem_classes="tbtn", scale=0, min_width=48)
+            run_dd = gr.Dropdown([], label="訓練結果（run）", filterable=False)
+            card_md = gr.Markdown("", elem_classes="infobar")
+        with gr.Column(scale=6, elem_classes="ls-panel"):
+            gr.HTML(_phead("顯示", "DISPLAY", "點下方結果縮圖即在此預覽"))
+            preview_img = gr.Image(show_label=False, elem_classes="preview")
+            preview_meta = gr.Markdown("批次推論後，點任一結果縮圖檢視。", elem_classes="pmeta")
+
+    with gr.Row(elem_classes="editrow"):
+        with gr.Column(elem_classes="ls-panel"):
+            gr.HTML(_phead("結果", "RESULT", "拖入影像 → ▶ 批次推論 → 逐張結果"))
+            with gr.Row(elem_classes="toolbar"):
+                files = gr.File(file_count="multiple", type="filepath", file_types=["image"],
+                                label="拖入 / 選擇影像（可多張）", scale=3)
+                infer_btn = gr.Button("▶ 批次推論", elem_classes="tbtn primary", scale=0)
+            count_md = gr.Markdown("", visible=False, elem_classes="countbar")
+            result_gallery = gr.Gallery(show_label=False, columns=6, object_fit="cover",
+                                        allow_preview=False, elem_classes="grid")
+            result_html = gr.HTML("", elem_classes="detail")
 
     # ---- 事件 ----
     def on_proj_change(slug):
         runs = _runs(slug)
-        return gr.update(choices=runs, value=(runs[0][1] if runs else None))
+        val = runs[0][1] if runs else None
+        return gr.update(choices=runs, value=val), (_card(val) if val else "")
+
+    def on_run_change(weights):
+        return _card(weights) if weights else ""
 
     def on_refresh(slug):
         return gr.update(choices=_all_projects()), gr.update(choices=_runs(slug))
@@ -120,22 +175,36 @@ def build_infer_tab():
             from . import detector
             res = detector.predict_det(weights, plist, dstr)
             progress(1.0, desc="完成")
+            gallery = [(r["image"], Path(r["path"]).name) for r in res]
+            items = [{"img": r["image"], "meta": _det_meta(r)} for r in res]
             total = sum(len(r["dets"]) for r in res)
-            head = f"<div class='infobar'>✅ 偵測完成：{len(res)} 張 · 共 {total} 個框</div>"
-            gallery = [(r["image"], _det_caption(r)) for r in res]
-            return head, gr.update(value=gallery, visible=True)
-        # cls
-        from . import predictor
-        model, classes, img = predictor.load_model(weights, dstr)
-        progress(0.6, desc="推論中…")
-        res = predictor.predict(model, classes, img, plist, dstr)
-        progress(1.0, desc="完成")
-        ok = sum(1 for r in res if r.get("ok"))
-        head = f"<div class='infobar'>✅ 推論完成：{ok}/{len(res)} 張</div>"
-        return head + _cls_table(res), gr.update(value=[], visible=False)
+            head = f"✅ 偵測完成：{len(res)} 張 · 共 {total} 個框"
+            table = _det_table(res)
+        else:
+            from . import predictor
+            model, classes, img = predictor.load_model(weights, dstr)
+            progress(0.6, desc="推論中…")
+            res = predictor.predict(model, classes, img, plist, dstr)
+            progress(1.0, desc="完成")
+            gallery = [(r["path"], Path(r["path"]).name) for r in res]
+            items = [{"img": r["path"], "meta": _cls_meta(r)} for r in res]
+            ok = sum(1 for r in res if r.get("ok"))
+            head = f"✅ 推論完成：{ok}/{len(res)} 張"
+            table = _cls_table(res)
+        return (gr.update(value=head, visible=True), gr.update(value=gallery), table, items)
+
+    def on_select(items, evt: gr.SelectData):
+        i = evt.index if evt is not None else None
+        if not items or i is None or i >= len(items):
+            return gr.update(), gr.update()
+        it = items[i]
+        return gr.update(value=it["img"]), it["meta"]
 
     refresh_btn.click(on_refresh, [proj_dd], [proj_dd, run_dd])
-    proj_dd.change(on_proj_change, [proj_dd], [run_dd])
-    infer_btn.click(on_infer, [run_dd, files], [result_html, result_gallery])
+    proj_dd.change(on_proj_change, [proj_dd], [run_dd, card_md])
+    run_dd.change(on_run_change, [run_dd], [card_md])
+    infer_btn.click(on_infer, [run_dd, files], [count_md, result_gallery, result_html, res_state])
+    result_gallery.select(on_select, [res_state], [preview_img, preview_meta])
+
     # 回傳供「訓練」分頁『用此模型推論』跨頁帶入專案/run
     return proj_dd, run_dd
