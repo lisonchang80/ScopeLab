@@ -643,6 +643,14 @@ CSS = r"""
 .main.fillable > .wrap > .contain > .column{flex:1 1 auto!important; min-height:0!important; overflow:hidden!important;}
 .main.fillable > .wrap > .contain > .column{gap:10px!important;}
 .contain > .column > .block{flex:0 0 auto!important; margin:0!important;}
+/* 三分頁：gr.Tabs / 作用中 tabitem / 其內層 column 撐滿主欄，恢復 toprow+editrow 高度鏈
+   （只設 flex/min-height，不碰 display，以免掀開 Gradio 用 display:none 隱藏的非作用分頁） */
+.main.fillable .tabs{flex:1 1 auto!important; min-height:0!important;
+  display:flex!important; flex-direction:column!important; overflow:hidden!important;}
+.main.fillable .tabs > .tab-nav{flex:0 0 auto!important;}
+.main.fillable .tabs > .tabitem{flex:1 1 auto!important; min-height:0!important; overflow:hidden!important;}
+.main.fillable .tabs > .tabitem > .column{flex:1 1 auto!important; min-height:0!important;
+  overflow:auto!important; gap:10px!important;}
 /* 上排固定較矮的高度 → 基本資料表單內部捲動、把剩餘高度讓給下方分類區 */
 .toprow{flex:0 0 auto!important; height:30vh!important; min-height:0!important; align-items:stretch!important;}
 .toprow > .column, .toprow .ls-panel{height:100%!important; min-height:0!important;}
