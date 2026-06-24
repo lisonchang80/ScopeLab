@@ -160,3 +160,5 @@ def build_train_tab():
     detect_btn.click(on_detect, None, device_html)
     train_btn.click(on_train, [proj_dd, recipe_radio],
                     [train_btn, device_html, check_html, eplog_html, result_html])
+    # 回傳供「標記」分頁的『開始訓練』跨頁帶入專案/配方
+    return proj_dd, recipe_radio

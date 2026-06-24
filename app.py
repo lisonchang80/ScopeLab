@@ -1,6 +1,6 @@
-"""ScopeLab — 影像辨識標註工作台
+"""ScopeLab — 影像辨識標記工作台
 
-沿用 ClinScope 的三視窗版面與海軍藍／檸檬黃視覺，但用途改為「建立訓練用標註資料集」：
+沿用 ClinScope 的三視窗版面與海軍藍／檸檬黃視覺，但用途改為「建立訓練用標記資料集」：
 
   左上  基本資料 BASIC INFO   填寫要做的模型／資料集資訊（名稱、科別、任務 cls/det、類別…）
   右上  影像編輯 IMAGE EDIT   選取的影像；點圖放大進全螢幕編輯器（縮放/平移、裁切/旋轉/翻轉、
@@ -49,7 +49,7 @@ def new_state(card: dict | None = None) -> dict:
 
 
 def persist(S):
-    """把標註寫回 labels.json（已建立專案才寫）。"""
+    """把標記寫回 labels.json（已建立專案才寫）。"""
     if S.get("slug"):
         store.save_labels(S["slug"], {"labels": S["labels"], "edits": S["edits"]})
 
@@ -58,7 +58,7 @@ def persist(S):
 #  分頁 / 篩選 / 計數
 # ============================================================================
 def _cls_of(labels, f):
-    """取分類標註（只接受字串，避免切換任務時 list 殘留造成錯誤）。"""
+    """取分類標記（只接受字串，避免切換任務時 list 殘留造成錯誤）。"""
     c = labels.get(f)
     return c if isinstance(c, str) else None
 
@@ -167,7 +167,7 @@ def detail_html_str(S):
         return ('<div class="ls-empty-state"><div class="es-ic">🏷️</div>'
                 '<div class="es-t">尚未載入影像</div>'
                 '<div class="es-s">先在左上「基本資料」<b>建立並儲存專案</b>，再按下方 '
-                '<b>📁 選擇資料夾</b> 載入未分類影像開始標註。</div></div>')
+                '<b>📁 選擇資料夾</b> 載入未分類影像開始標記。</div></div>')
     if not pf:
         return '<div class="ls-empty-state"><div class="es-ic">📭</div><div class="es-t">此分頁沒有影像</div></div>'
 
@@ -197,7 +197,7 @@ def detail_html_str(S):
                 f'<tr class="ls-row" data-i="{i}"><td class="ls-name" title="{html.escape(f)}">'
                 f'{edited}{html.escape(store.Path(f).name)}</td>'
                 f'<td>{len(bx)}</td><td>{html.escape(tag)}</td>'
-                f'<td><button class="ls-edit" data-i="{i}" title="放大標註">✎</button></td></tr>')
+                f'<td><button class="ls-edit" data-i="{i}" title="放大標記">✎</button></td></tr>')
     return (f'<div class="ls-dt-wrap"><table class="ls-dt"><thead>{head}</thead>'
             f'<tbody>{"".join(rows)}</tbody></table></div>')
 
@@ -211,7 +211,7 @@ def count_text(S):
     if S["task"] == "cls":
         head = f"共 **{n}** 張 · 已分類 **{cc['labeled']}** · 未分類 **{cc['null']}**"
     else:
-        head = f"共 **{n}** 張 · 已標註 **{cc['done']}** · 框 **{cc['boxes']}**"
+        head = f"共 **{n}** 張 · 已標記 **{cc['done']}** · 框 **{cc['boxes']}**"
     return gr.update(value=f"{head} ｜ {chips}", visible=True)
 
 
@@ -223,7 +223,7 @@ def info_text(S):
     tag = "分類" if S["task"] == "cls" else "偵測"
     base = f"**{S['name'] or '（未命名）'}** · {tag} · 類別 {len(S['classes'])} · 影像 {n}"
     if n:
-        base += f" · 已標註 {cc['labeled']}"
+        base += f" · 已標記 {cc['labeled']}"
     return base
 
 
@@ -487,7 +487,7 @@ def on_bridge(payload, S):
         img = obj.get("img")
         if img:
             if not S.get("slug"):
-                gr.Warning("像素編輯需先儲存專案；本次僅保留標註框。")
+                gr.Warning("像素編輯需先儲存專案；本次僅保留標記框。")
             else:
                 try:
                     S["edits"][f] = imaging.save_dataurl(S["slug"], f, img)
@@ -579,6 +579,23 @@ def on_export_confirm(fmt, S, progress=gr.Progress()):
             file_update,                            # 下載（僅 zip）
             gr.update(value="", visible=False),     # 清警告
             gr.update(value="開始匯出"))            # 按鈕還原
+
+
+# ============================================================================
+#  從「標記」頁直接開始訓練（建輸出資料夾 → 切到訓練頁 → 帶入專案/配方）
+# ============================================================================
+def on_start_train(S):
+    slug = S.get("slug")
+    if not slug:
+        raise gr.Error("請先儲存基本資料（命名專案）後再開始訓練。")
+    # 建立輸出資料夾（runs/，訓練結果會落在 runs/<時間戳>/）若還沒有
+    (store.project_dir(slug) / "runs").mkdir(parents=True, exist_ok=True)
+    from src.train.recipes import recipe_choices, DEFAULT_RECIPE
+    task = S.get("task", "cls")
+    gr.Info(f"🏋 已帶「{S.get('name') or slug}」到訓練分頁")
+    return (gr.update(selected="train"),                          # 切換到訓練分頁
+            gr.update(choices=train.tab._all_projects(), value=slug),  # 帶入專案
+            gr.update(choices=recipe_choices(task), value=DEFAULT_RECIPE))  # 配方隨任務
 
 
 # ============================================================================
@@ -881,11 +898,11 @@ def panel_head(tag, en, sub):
 BRAND_HTML = (
     '<div class="brandbar"><div class="brand"><span class="logo">🏷️</span>'
     '<span class="btext"><span class="bt">ScopeLab</span>'
-    '<span class="bsub">影像辨識標註工作台</span></span></div>'
+    '<span class="bsub">影像辨識標記工作台</span></span></div>'
     '<div class="bmeta"><span class="chip">分類 · 偵測</span>'
     '<span class="chip lemon">建立訓練資料集</span></div></div>')
 
-FOOTER_HTML = ('<div class="foot">影像標註 → 匯出 ImageFolder / YOLO / COCO，'
+FOOTER_HTML = ('<div class="foot">影像標記 → 匯出 ImageFolder / YOLO / COCO，'
                '可直接對接 <b>ClinScope</b> / <b>MatScope</b> 訓練流程。</div>')
 
 
@@ -1260,7 +1277,7 @@ POST_BRIDGE_JS = r"""
 # ============================================================================
 def build():
     # theme / css 在 Gradio 6 改由 launch() 傳入（見 launch_app）
-    with gr.Blocks(title="ScopeLab — 影像辨識標註工作台") as demo:
+    with gr.Blocks(title="ScopeLab — 影像辨識標記工作台") as demo:
         gr.HTML(BRAND_HTML, elem_classes="brandwrap")
 
         projs = project_choices()
@@ -1276,8 +1293,8 @@ def build():
             S0 = new_state(init_card)
         S = gr.State(S0)
 
-        with gr.Tabs():
-            with gr.Tab("🏷 標註"):
+        with gr.Tabs() as tabs:
+            with gr.Tab("🏷 標記", id="label"):
                 # ---- 上排：基本資料(左) + 影像編輯(右) ----
                 with gr.Row(equal_height=False, elem_classes="toprow"):
                     with gr.Column(scale=5, elem_classes="ls-panel infowin"):
@@ -1326,6 +1343,7 @@ def build():
                                                     container=False, interactive=False,
                                                     elem_classes="shortdd assigndd")
                             export_btn = gr.Button("💾 匯出資料集", elem_classes="tbtn accent", scale=0)
+                            start_train_btn = gr.Button("🏋 開始訓練", elem_classes="tbtn primary", scale=0)
                         count_md = gr.Markdown("", visible=False, elem_classes="countbar")
                         page_radio = gr.Radio(page_choices(S0), value=TOTAL, show_label=False,
                                               container=False, elem_classes="tabstrip")
@@ -1355,16 +1373,16 @@ def build():
                         # 用 Radio 列出專案（避開「visible 切換時 Dropdown 不掛載」的 Gradio 雷）
                         del_pick = gr.Radio(project_choices(), value=None,
                                             label="選擇要刪除的專案", elem_classes="ls-fmt")
-                        gr.HTML('⚠️ 刪除後<b>無法復原</b>：該專案的基本資料、標註與編輯影像'
+                        gr.HTML('⚠️ 刪除後<b>無法復原</b>：該專案的基本資料、標記與編輯影像'
                                 '（<code>projects/&lt;slug&gt;/</code> 整個資料夾）會被永久移除。',
                                 elem_classes="ls-modal-warn", visible=True)
                         with gr.Row(elem_classes="ls-modal-actions"):
                             del_cancel = gr.Button("取消", elem_classes="tbtn", scale=0)
                             del_ok = gr.Button("🗑 確定刪除", elem_classes="tbtn danger-solid", scale=0)
 
-            with gr.Tab("🏋 訓練"):
-                train.build_train_tab()
-            with gr.Tab("🔍 推論"):
+            with gr.Tab("🏋 訓練", id="train"):
+                train_proj_dd, train_recipe_radio = train.build_train_tab()
+            with gr.Tab("🔍 推論", id="infer"):
                 infer.build_infer_tab()
         gr.HTML(FOOTER_HTML)
 
@@ -1395,6 +1413,9 @@ def build():
         export_cancel.click(lambda: gr.update(visible=False), None, [export_modal])
         export_ok.click(on_export_confirm, [export_fmt, S],
                         [export_modal, export_file, export_warn, export_ok])
+
+        start_train_btn.click(on_start_train, [S],
+                              [tabs, train_proj_dd, train_recipe_radio])
 
         del_btn.click(on_del_open, [S], [del_modal, del_pick])
         del_cancel.click(lambda: gr.update(visible=False), None, [del_modal])

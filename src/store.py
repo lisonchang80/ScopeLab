@@ -25,11 +25,11 @@ PROJECTS.mkdir(exist_ok=True)
 IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp", ".gif"}
 TASKS = {"cls": "分類", "det": "偵測"}
 
-# 標註頁籤的特殊分頁鍵
+# 標記頁籤的特殊分頁鍵
 TOTAL = "📋 總表"
 NULL = "Null"          # cls：未分類
-DONE = "✅ 已標註"      # det：含框
-TODO = "◻ 未標註"      # det：無框
+DONE = "✅ 已標記"      # det：含框
+TODO = "◻ 未標記"      # det：無框
 ADDCLASS = "＋"         # 新增類別分頁
 
 
