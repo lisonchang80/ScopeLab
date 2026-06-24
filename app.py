@@ -288,6 +288,16 @@ def project_choices():
     return [(f"{c['name']}（{TASKS.get(c['task'],'')}）", c["slug"]) for c in store.list_projects()]
 
 
+def on_page_projects(S):
+    """頁面載入時重讀磁碟刷新專案下拉。
+    Gradio 把元件 choices 凍在 build()（伺服器啟動）當下，session 中新建的專案
+    只靠 gr.update 即時顯示，一旦 F5 重整就退回啟動快照而消失 → 每次載入重抓。"""
+    choices = project_choices()
+    vals = [v for _, v in choices]
+    cur = S.get("slug") if S.get("slug") in vals else (choices[0][1] if choices else None)
+    return gr.update(choices=choices, value=cur), gr.update(choices=choices, value=None)
+
+
 def _form(card):
     cls_txt = "、".join(card.get("classes") or [])
     return (card.get("name", ""), card.get("discipline", ""), card.get("task", "cls"),
@@ -532,14 +542,18 @@ def on_export_fmt_change(fmt, S):
             gr.update(value="開始匯出"))
 
 
-def on_export_confirm(fmt, S):
+def on_export_confirm(fmt, S, progress=gr.Progress()):
     if not S.get("slug"):
         raise gr.Error("請先儲存專案再匯出。")
 
+    card = store.load_card(S["slug"]) or store.blank_card()
+    card["classes"] = S["classes"]
+    name = card.get("name")
+
     # 重複匯出：目的地已存在且尚未針對此格式確認 → 先提示，要求再按一次確認
-    if exporter.already_exists(S["slug"], fmt) and S.get("_ovw_fmt") != fmt:
+    if exporter.already_exists(S["slug"], fmt, name) and S.get("_ovw_fmt") != fmt:
         S["_ovw_fmt"] = fmt
-        dest = exporter.dest_for(S["slug"], fmt)
+        dest = exporter.dest_for(S["slug"], fmt, name)
         warn = (f'⚠️ 已存在舊的匯出 <code>{dest.name}</code>，'
                 '再次匯出會<b>整個覆蓋</b>它（舊內容會被刪除）。<br>確定要覆蓋嗎？')
         return (gr.update(),                          # modal 保持開啟
@@ -549,18 +563,20 @@ def on_export_confirm(fmt, S):
 
     # 執行匯出（本來就不存在，或使用者已確認覆蓋）
     S["_ovw_fmt"] = None
-    card = store.load_card(S["slug"]) or store.blank_card()
-    card["classes"] = S["classes"]
     try:
         path, stats, is_zip = exporter.run(
-            S["slug"], card, S["files"], S["labels"], S["edits"], fmt)
+            S["slug"], card, S["files"], S["labels"], S["edits"], fmt, progress)
     except Exception as e:  # 占用/權限等 → 乾淨的錯誤提示，不讓 handler 崩潰
         raise gr.Error(f"匯出失敗：{e}")
     gr.Info(f"✅ 匯出完成：{stats.get('images',0)} 張"
             + (f" · {stats.get('boxes',0)} 框" if "boxes" in stats else "")
             + f" → {path}")
+    # ⚠️ gr.File 只能吃「檔案」；資料夾匯出把目錄路徑塞進去會讓前端 File 元件
+    #    丟 e.i18n is not a function 整頁凍住。只有 zip 才放下載檔，資料夾不放。
+    file_update = (gr.update(value=path, visible=True) if is_zip
+                   else gr.update(value=None, visible=False))
     return (gr.update(visible=False),               # 關閉 modal
-            gr.update(value=path, visible=is_zip),  # 下載
+            file_update,                            # 下載（僅 zip）
             gr.update(value="", visible=False),     # 清警告
             gr.update(value="開始匯出"))            # 按鈕還原
 
@@ -1371,6 +1387,8 @@ def build():
         del_ok.click(on_del_confirm, [del_pick, S],
                      [del_modal, proj_dd, S, *FORM, *R4, info_md, *PV])
 
+        # 頁面載入：重讀磁碟刷新專案下拉（避免 F5 後新建專案消失）
+        demo.load(on_page_projects, [S], [proj_dd, del_pick])
         # 初始渲染：讓 gallery / detail 都先掛載，再依檢視模式收起其一
         demo.load(lambda s: render4(s), [S], R4)
         demo.load(None, None, None, js=INIT_JS)

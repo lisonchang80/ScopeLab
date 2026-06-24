@@ -15,7 +15,6 @@ import os
 import re
 import shutil
 import stat
-import unicodedata
 from datetime import date
 from pathlib import Path
 
@@ -39,11 +38,10 @@ def today() -> str:
 
 
 def slugify(name: str) -> str:
-    """名稱 → 檔名安全的 slug。中文等非 ASCII 以 romaji/拼音不易，故保留英數、其餘轉底線。
-    全中文名稱會落到 'proj'，再附流水號避免相撞。"""
-    norm = unicodedata.normalize("NFKD", name or "")
-    ascii_only = norm.encode("ascii", "ignore").decode("ascii")
-    s = re.sub(r"[^A-Za-z0-9]+", "_", ascii_only).strip("_").lower()
+    """名稱 → 檔名安全的 slug，盡量保留可讀性。
+    保留中英數字（含 CJK 等 Unicode 文字），空白與其餘標點/符號轉底線；
+    全空或純符號才退回 'proj'。Windows/NTFS 允許中文資料夾名稱。"""
+    s = re.sub(r"[^\w]+", "_", (name or "").strip(), flags=re.UNICODE).strip("_")
     return s or "proj"
 
 

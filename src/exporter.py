@@ -42,15 +42,21 @@ def _safe(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*]+', "_", str(name)).strip() or "_"
 
 
-def dest_for(slug: str, fmt: str) -> Path | None:
+def _base(slug: str, name: str | None = None) -> str:
+    """匯出資料夾的基底名：優先用可讀的專案名稱（_safe 保留中文），退回 slug。"""
+    b = _safe(name) if name else ""
+    return b if b and b != "_" else (slug or "export")
+
+
+def dest_for(slug: str, fmt: str, name: str | None = None) -> Path | None:
     """該 (slug, 格式) 預期輸出的資料夾路徑（不建立）。未知格式回 None。"""
     tag = FMT_TAG.get(fmt)
-    return (EXPORTS / f"{slug}__{tag}") if tag else None
+    return (EXPORTS / f"{_base(slug, name)}__{tag}") if tag else None
 
 
-def already_exists(slug: str, fmt: str) -> bool:
+def already_exists(slug: str, fmt: str, name: str | None = None) -> bool:
     """該格式是否已有舊匯出（資料夾或對應 .zip）。"""
-    d = dest_for(slug, fmt)
+    d = dest_for(slug, fmt, name)
     if d is None:
         return False
     if d.exists():
@@ -77,9 +83,9 @@ def _force_rmtree(path: Path):
             shutil.rmtree(path, onerror=_onerror)
 
 
-def _fresh(slug: str, tag: str) -> Path:
+def _fresh(base: str, tag: str) -> Path:
     EXPORTS.mkdir(exist_ok=True)
-    out = EXPORTS / f"{slug}__{tag}"
+    out = EXPORTS / f"{base}__{tag}"
     if out.exists():
         _force_rmtree(out)
         if out.exists():
@@ -101,11 +107,14 @@ def _write_card(dest: Path, card: dict, stats: dict):
 
 # ---- classification ------------------------------------------------------
 
-def export_cls(slug, card, files, labels, edits, dest: Path):
+def export_cls(slug, card, files, labels, edits, dest: Path, progress=None):
     classes = card.get("classes", [])
     per = {c: 0 for c in classes}
     n = 0
-    for src in files:
+    total = len(files) or 1
+    for i, src in enumerate(files):
+        if progress:
+            progress(i / total, desc=f"複製影像 {i + 1}/{len(files)}")
         cls = labels.get(src)
         if not isinstance(cls, str) or cls not in classes:
             continue
@@ -125,14 +134,17 @@ def export_cls(slug, card, files, labels, edits, dest: Path):
 
 # ---- detection -----------------------------------------------------------
 
-def export_det_yolo(slug, card, files, labels, edits, dest: Path):
+def export_det_yolo(slug, card, files, labels, edits, dest: Path, progress=None):
     classes = card.get("classes", [])
     cidx = {c: i for i, c in enumerate(classes)}
     img_dir, lbl_dir = dest / "images", dest / "labels"
     img_dir.mkdir(parents=True, exist_ok=True)
     lbl_dir.mkdir(parents=True, exist_ok=True)
     n_img = n_box = 0
-    for src in files:
+    total = len(files) or 1
+    for idx, src in enumerate(files):
+        if progress:
+            progress(idx / total, desc=f"處理影像 {idx + 1}/{len(files)}")
         boxes = labels.get(src)
         if not isinstance(boxes, list) or not boxes:
             continue
@@ -154,7 +166,7 @@ def export_det_yolo(slug, card, files, labels, edits, dest: Path):
     return {"images": n_img, "boxes": n_box, "classes": classes}
 
 
-def export_det_coco(slug, card, files, labels, edits, dest: Path):
+def export_det_coco(slug, card, files, labels, edits, dest: Path, progress=None):
     classes = card.get("classes", [])
     img_dir = dest / "images"
     img_dir.mkdir(parents=True, exist_ok=True)
@@ -162,7 +174,10 @@ def export_det_coco(slug, card, files, labels, edits, dest: Path):
     cid = {c: i + 1 for i, c in enumerate(classes)}
     images, annos = [], []
     aid = 1
-    for src in files:
+    total = len(files) or 1
+    for idx, src in enumerate(files):
+        if progress:
+            progress(idx / total, desc=f"處理影像 {idx + 1}/{len(files)}")
         boxes = labels.get(src)
         if not isinstance(boxes, list) or not boxes:
             continue
@@ -190,29 +205,34 @@ def export_det_coco(slug, card, files, labels, edits, dest: Path):
 
 # ---- entry ---------------------------------------------------------------
 
-def run(slug, card, files, labels, edits, fmt) -> tuple[str, dict, bool]:
+def run(slug, card, files, labels, edits, fmt, progress=None) -> tuple[str, dict, bool]:
     """回傳 (結果路徑, 統計, 是否為 zip)。"""
+    base = _base(slug, card.get("name"))
     if fmt == "cls_folder":
-        dest = _fresh(slug, "imagefolder")
-        stats = export_cls(slug, card, files, labels, edits, dest)
+        dest = _fresh(base, "imagefolder")
+        stats = export_cls(slug, card, files, labels, edits, dest, progress)
         _write_card(dest, card, stats)
         return str(dest), stats, False
     if fmt == "cls_zip":
-        dest = _fresh(slug, "imagefolder")
-        stats = export_cls(slug, card, files, labels, edits, dest)
+        dest = _fresh(base, "imagefolder")
+        stats = export_cls(slug, card, files, labels, edits, dest, progress)
         _write_card(dest, card, stats)
+        if progress:
+            progress(0.95, desc="壓縮 ZIP…")
         zp = shutil.make_archive(str(dest), "zip", dest)
         return zp, stats, True
     if fmt in ("det_yolo", "det_zip"):
-        dest = _fresh(slug, "yolo")
-        stats = export_det_yolo(slug, card, files, labels, edits, dest)
+        dest = _fresh(base, "yolo")
+        stats = export_det_yolo(slug, card, files, labels, edits, dest, progress)
         _write_card(dest, card, stats)
         if fmt == "det_zip":
+            if progress:
+                progress(0.95, desc="壓縮 ZIP…")
             return shutil.make_archive(str(dest), "zip", dest), stats, True
         return str(dest), stats, False
     if fmt == "det_coco":
-        dest = _fresh(slug, "coco")
-        stats = export_det_coco(slug, card, files, labels, edits, dest)
+        dest = _fresh(base, "coco")
+        stats = export_det_coco(slug, card, files, labels, edits, dest, progress)
         _write_card(dest, card, stats)
         return str(dest), stats, False
     raise ValueError(f"未知匯出格式：{fmt}")
