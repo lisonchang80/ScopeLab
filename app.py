@@ -20,7 +20,7 @@ from pathlib import Path
 import gradio as gr
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from src import store, imaging, exporter
+from src import store, imaging, exporter, train, infer
 from src.store import TOTAL, NULL, DONE, TODO, ADDCLASS, TASKS
 
 # 工具列『指派分類』下拉未選圖時顯示的提示（並虛化）；比照 ClinScope「⇄ 切換分類」
@@ -1268,90 +1268,96 @@ def build():
             S0 = new_state(init_card)
         S = gr.State(S0)
 
-        # ---- 上排：基本資料(左) + 影像編輯(右) ----
-        with gr.Row(equal_height=False, elem_classes="toprow"):
-            with gr.Column(scale=5, elem_classes="ls-panel infowin"):
-                gr.HTML(panel_head("基本資料", "BASIC INFO", "要做的模型 / 資料集資訊"))
-                with gr.Column(elem_classes="infoscroll"):
-                    with gr.Row(elem_classes="inforow"):
-                        proj_dd = gr.Dropdown(projs, value=init_slug or None, label="切換專案（選既有的）",
-                                              filterable=False, scale=4)
-                        with gr.Column(scale=0, min_width=128, elem_classes="projbtns"):
-                            new_btn = gr.Button("🆕 新專案", elem_classes="tbtn", scale=0)
-                            del_btn = gr.Button("🗑 刪除專案", elem_classes="tbtn danger", scale=0)
-                    name_tb = gr.Textbox(init_card.get("name", ""), label="專案名稱（新專案在這裡命名）",
-                                         placeholder="例：周邊血球五分類")
-                    with gr.Row(elem_classes="inforow"):
-                        disc_tb = gr.Textbox(init_card.get("discipline", ""), label="科別 / 領域", placeholder="血液 / 材料…", scale=3)
-                        task_radio = gr.Radio([("分類", "cls"), ("偵測", "det")], value=init_card.get("task", "cls"),
-                                              label="任務類型", scale=2)
-                    cls_tb = gr.Textbox("、".join(init_card.get("classes") or []), label="類別清單（、或逗號分隔）",
-                                        placeholder="中性球、淋巴球、單核球…", lines=1)
-                    with gr.Row(elem_classes="inforow"):
-                        author_tb = gr.Textbox(init_card.get("author", ""), label="作者", scale=3)
-                        ver_tb = gr.Textbox(init_card.get("version", "0.1.0"), label="版本", scale=2)
-                    with gr.Row(elem_classes="inforow"):
-                        lic_tb = gr.Textbox(init_card.get("license", ""), label="授權", scale=3)
-                        save_card_btn = gr.Button("💾 儲存基本資料", elem_classes="tbtn primary", scale=2)
-                    desc_tb = gr.Textbox(init_card.get("description", ""), label="說明", lines=2,
-                                         placeholder="資料來源、染色 / 拍攝條件、用途…")
-                    info_md = gr.Markdown(info_text(S0), elem_classes="infobar")
+        with gr.Tabs():
+            with gr.Tab("🏷 標註"):
+                # ---- 上排：基本資料(左) + 影像編輯(右) ----
+                with gr.Row(equal_height=False, elem_classes="toprow"):
+                    with gr.Column(scale=5, elem_classes="ls-panel infowin"):
+                        gr.HTML(panel_head("基本資料", "BASIC INFO", "要做的模型 / 資料集資訊"))
+                        with gr.Column(elem_classes="infoscroll"):
+                            with gr.Row(elem_classes="inforow"):
+                                proj_dd = gr.Dropdown(projs, value=init_slug or None, label="切換專案（選既有的）",
+                                                      filterable=False, scale=4)
+                                with gr.Column(scale=0, min_width=128, elem_classes="projbtns"):
+                                    new_btn = gr.Button("🆕 新專案", elem_classes="tbtn", scale=0)
+                                    del_btn = gr.Button("🗑 刪除專案", elem_classes="tbtn danger", scale=0)
+                            name_tb = gr.Textbox(init_card.get("name", ""), label="專案名稱（新專案在這裡命名）",
+                                                 placeholder="例：周邊血球五分類")
+                            with gr.Row(elem_classes="inforow"):
+                                disc_tb = gr.Textbox(init_card.get("discipline", ""), label="科別 / 領域", placeholder="血液 / 材料…", scale=3)
+                                task_radio = gr.Radio([("分類", "cls"), ("偵測", "det")], value=init_card.get("task", "cls"),
+                                                      label="任務類型", scale=2)
+                            cls_tb = gr.Textbox("、".join(init_card.get("classes") or []), label="類別清單（、或逗號分隔）",
+                                                placeholder="中性球、淋巴球、單核球…", lines=1)
+                            with gr.Row(elem_classes="inforow"):
+                                author_tb = gr.Textbox(init_card.get("author", ""), label="作者", scale=3)
+                                ver_tb = gr.Textbox(init_card.get("version", "0.1.0"), label="版本", scale=2)
+                            with gr.Row(elem_classes="inforow"):
+                                lic_tb = gr.Textbox(init_card.get("license", ""), label="授權", scale=3)
+                                save_card_btn = gr.Button("💾 儲存基本資料", elem_classes="tbtn primary", scale=2)
+                            desc_tb = gr.Textbox(init_card.get("description", ""), label="說明", lines=2,
+                                                 placeholder="資料來源、染色 / 拍攝條件、用途…")
+                            info_md = gr.Markdown(info_text(S0), elem_classes="infobar")
 
-            with gr.Column(scale=6, elem_classes="ls-panel"):
-                gr.HTML(panel_head("影像編輯", "IMAGE EDIT", "點圖即放大 → 縮放/裁切/旋轉/增強/畫框 → 存回"))
-                preview_img = gr.Image(show_label=False, elem_classes="preview")
-                preview_meta = gr.Markdown("選一張影像檢視；點圖即放大編輯。", elem_classes="pmeta")
-                gr.HTML('<div class="edithint">點影像放大編輯 · 方向鍵切換影像 · 分類模式數字鍵 1–9 指派類別</div>')
+                    with gr.Column(scale=6, elem_classes="ls-panel"):
+                        gr.HTML(panel_head("影像編輯", "IMAGE EDIT", "點圖即放大 → 縮放/裁切/旋轉/增強/畫框 → 存回"))
+                        preview_img = gr.Image(show_label=False, elem_classes="preview")
+                        preview_meta = gr.Markdown("選一張影像檢視；點圖即放大編輯。", elem_classes="pmeta")
+                        gr.HTML('<div class="edithint">點影像放大編輯 · 方向鍵切換影像 · 分類模式數字鍵 1–9 指派類別</div>')
 
-        # ---- 下排：分類(滿版) ----
-        with gr.Row(elem_classes="editrow"):
-            with gr.Column(elem_classes="ls-panel"):
-                gr.HTML(panel_head("分類", "CLASSIFY", "載入未分類影像 · 分頁分類 · ＋ 新增類別 · 匯出"))
-                with gr.Row(elem_classes="toolbar"):
-                    folder_btn = gr.Button("📁 選擇資料夾", elem_classes="tbtn", scale=0)
-                    view_dd = gr.Dropdown(["👁 詳細資料", "👁 圖示"], value="👁 詳細資料",
-                                          show_label=False, container=False, elem_classes="shortdd")
-                    # 比照 ClinScope「⇄ 切換分類」：提示文字當下拉值、未選圖虛化、與按鈕同列
-                    assign_dd = gr.Dropdown([ASSIGN_HINT], value=ASSIGN_HINT, show_label=False,
-                                            container=False, interactive=False,
-                                            elem_classes="shortdd assigndd")
-                    export_btn = gr.Button("💾 匯出資料集", elem_classes="tbtn accent", scale=0)
-                count_md = gr.Markdown("", visible=False, elem_classes="countbar")
-                page_radio = gr.Radio(page_choices(S0), value=TOTAL, show_label=False,
-                                      container=False, elem_classes="tabstrip")
-                gallery = gr.Gallery(show_label=False, columns=8, object_fit="cover",
-                                     allow_preview=False, elem_classes="grid")
-                detail_html = gr.HTML(detail_html_str(S0), elem_classes="detail")
-                bridge = gr.Textbox("", elem_id="ls-bridge", show_label=False)
-                bridge_btn = gr.Button("bridge", elem_id="ls-trigger")
-                data_box = gr.Textbox("{}", elem_id="ls-data", show_label=False)
-                export_file = gr.File(label="下載", visible=False)
+                # ---- 下排：分類(滿版) ----
+                with gr.Row(elem_classes="editrow"):
+                    with gr.Column(elem_classes="ls-panel"):
+                        gr.HTML(panel_head("分類", "CLASSIFY", "載入未分類影像 · 分頁分類 · ＋ 新增類別 · 匯出"))
+                        with gr.Row(elem_classes="toolbar"):
+                            folder_btn = gr.Button("📁 選擇資料夾", elem_classes="tbtn", scale=0)
+                            view_dd = gr.Dropdown(["👁 詳細資料", "👁 圖示"], value="👁 詳細資料",
+                                                  show_label=False, container=False, elem_classes="shortdd")
+                            # 比照 ClinScope「⇄ 切換分類」：提示文字當下拉值、未選圖虛化、與按鈕同列
+                            assign_dd = gr.Dropdown([ASSIGN_HINT], value=ASSIGN_HINT, show_label=False,
+                                                    container=False, interactive=False,
+                                                    elem_classes="shortdd assigndd")
+                            export_btn = gr.Button("💾 匯出資料集", elem_classes="tbtn accent", scale=0)
+                        count_md = gr.Markdown("", visible=False, elem_classes="countbar")
+                        page_radio = gr.Radio(page_choices(S0), value=TOTAL, show_label=False,
+                                              container=False, elem_classes="tabstrip")
+                        gallery = gr.Gallery(show_label=False, columns=8, object_fit="cover",
+                                             allow_preview=False, elem_classes="grid")
+                        detail_html = gr.HTML(detail_html_str(S0), elem_classes="detail")
+                        bridge = gr.Textbox("", elem_id="ls-bridge", show_label=False)
+                        bridge_btn = gr.Button("bridge", elem_id="ls-trigger")
+                        data_box = gr.Textbox("{}", elem_id="ls-data", show_label=False)
+                        export_file = gr.File(label="下載", visible=False)
 
-        # ---- 匯出對話框 ----
-        with gr.Column(visible=False, elem_classes="ls-modal-backdrop") as export_modal:
-            with gr.Column(elem_classes="ls-modal-box"):
-                gr.HTML('<div class="ls-modal-title">💾 匯出資料集</div>')
-                export_fmt = gr.Radio(export_formats(S0["task"]), value=export_formats(S0["task"])[0][1],
-                                      show_label=False, elem_classes="ls-fmt")
-                export_warn = gr.HTML("", visible=False, elem_classes="ls-modal-warn")
-                with gr.Row(elem_classes="ls-modal-actions"):
-                    export_cancel = gr.Button("取消", elem_classes="tbtn", scale=0)
-                    export_ok = gr.Button("開始匯出", elem_classes="tbtn accent", scale=0)
+                # ---- 匯出對話框 ----
+                with gr.Column(visible=False, elem_classes="ls-modal-backdrop") as export_modal:
+                    with gr.Column(elem_classes="ls-modal-box"):
+                        gr.HTML('<div class="ls-modal-title">💾 匯出資料集</div>')
+                        export_fmt = gr.Radio(export_formats(S0["task"]), value=export_formats(S0["task"])[0][1],
+                                              show_label=False, elem_classes="ls-fmt")
+                        export_warn = gr.HTML("", visible=False, elem_classes="ls-modal-warn")
+                        with gr.Row(elem_classes="ls-modal-actions"):
+                            export_cancel = gr.Button("取消", elem_classes="tbtn", scale=0)
+                            export_ok = gr.Button("開始匯出", elem_classes="tbtn accent", scale=0)
 
-        # ---- 刪除專案對話框 ----
-        with gr.Column(visible=False, elem_classes="ls-modal-backdrop") as del_modal:
-            with gr.Column(elem_classes="ls-modal-box"):
-                gr.HTML('<div class="ls-modal-title">🗑 刪除專案</div>')
-                # 用 Radio 列出專案（避開「visible 切換時 Dropdown 不掛載」的 Gradio 雷）
-                del_pick = gr.Radio(project_choices(), value=None,
-                                    label="選擇要刪除的專案", elem_classes="ls-fmt")
-                gr.HTML('⚠️ 刪除後<b>無法復原</b>：該專案的基本資料、標註與編輯影像'
-                        '（<code>projects/&lt;slug&gt;/</code> 整個資料夾）會被永久移除。',
-                        elem_classes="ls-modal-warn", visible=True)
-                with gr.Row(elem_classes="ls-modal-actions"):
-                    del_cancel = gr.Button("取消", elem_classes="tbtn", scale=0)
-                    del_ok = gr.Button("🗑 確定刪除", elem_classes="tbtn danger-solid", scale=0)
+                # ---- 刪除專案對話框 ----
+                with gr.Column(visible=False, elem_classes="ls-modal-backdrop") as del_modal:
+                    with gr.Column(elem_classes="ls-modal-box"):
+                        gr.HTML('<div class="ls-modal-title">🗑 刪除專案</div>')
+                        # 用 Radio 列出專案（避開「visible 切換時 Dropdown 不掛載」的 Gradio 雷）
+                        del_pick = gr.Radio(project_choices(), value=None,
+                                            label="選擇要刪除的專案", elem_classes="ls-fmt")
+                        gr.HTML('⚠️ 刪除後<b>無法復原</b>：該專案的基本資料、標註與編輯影像'
+                                '（<code>projects/&lt;slug&gt;/</code> 整個資料夾）會被永久移除。',
+                                elem_classes="ls-modal-warn", visible=True)
+                        with gr.Row(elem_classes="ls-modal-actions"):
+                            del_cancel = gr.Button("取消", elem_classes="tbtn", scale=0)
+                            del_ok = gr.Button("🗑 確定刪除", elem_classes="tbtn danger-solid", scale=0)
 
+            with gr.Tab("🏋 訓練"):
+                train.build_train_tab()
+            with gr.Tab("🔍 推論"):
+                infer.build_infer_tab()
         gr.HTML(FOOTER_HTML)
 
         # ---- 輸出組 ----
