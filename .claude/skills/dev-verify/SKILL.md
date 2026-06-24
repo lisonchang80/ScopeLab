@@ -38,6 +38,9 @@ for ($i=0;$i -lt 25;$i++){ $c=Get-NetTCPConnection -State Listen -LocalPort 7861
   對 modal 內按鈕 / Radio / 詳細表列 `preview_click` 常常沒生效（同一個點擊有時開有時不開）。
   - 開 modal 後**要分開一次 eval 再檢查**（click 與檢查同一個 promise 內會被 re-render 打斷，回 `{}`）。
   - 用 JS `.click()` 勾 Radio 只改 DOM checked、**不會把值送到 Gradio 後端** → 用 `preview_click` 點 input。
+- **`preview_start` 用的是「工作區」launch.json**（`D:\Claude code\.claude\launch.json` 的 **`scopelab`** 設定，埠 7861），**不是 repo 內那個**；改名/換埠時這支也要同步。要用 preview 得先把外部常駐 server 停掉（埠衝突），用完再用 `Start-Process` 重啟常駐（見 §1）。
+- **分頁（gr.Tabs）切換雷**：① tab 按鈕有**兩套**——一套在 `.tab-container.visually-hidden`（無障礙、點了沒用），要點**可見**那套 `.tab-container:not(.visually-hidden) button[n]` ② tab 內容**懶載入**：只有作用中的 tab 在 DOM，切過去後要等 ~2.5s 才查得到該頁元素（`.phead .ph-tag` 會同時含已渲染各頁）③ 首次 eval 常回空（DOM 還沒 settle）→ 重試一次。
+- **DOM 狀態會莫名變壞**（`.tab-nav button` 一下 3 個一下 0 個）→ 別硬纏，量到關鍵數據（如版面高度鏈）就收手，靠 §3 後端驗證補。
 
 ## 3. 後端邏輯驗證（最可靠，繞開 preview 不穩）
 
@@ -50,12 +53,14 @@ import sys; sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, r"D:\Claude code\ScopeLab")
 import ast; ast.parse(open(r"D:\Claude code\ScopeLab\app.py",encoding="utf-8").read()); print("AST OK")
 import app; from src import store
+print("BUILD OK:", type(app.build()).__name__)   # ★ 最強結構檢查（見下）
 # 造假 state 呼叫 handler，len(回傳) 要等於該事件 outputs 清單長度
 '@ | & $py -
 ```
 
 要點：
-- **cp950 主控台**印中文會 `UnicodeEncodeError` → 測試腳本開頭 `sys.stdout.reconfigure(encoding="utf-8")`、或 `$env:PYTHONIOENCODING="utf-8"`。
+- **`app.build()` 是最強的結構驗證**：整棵元件樹＋跨頁元件解包（`build_train_tab` 回 4 / `build_infer_tab` 回 2）＋所有 `.click/.change/.load` 接線都得建得起來才會過。改版面/分頁/跨頁接線後先跑這個。（但 build() **不**會跑 generator → yield tuple 長度 vs outputs 長度的不一致只在執行期才爆，要靠肉眼核對或 headless 跑 trainer。）
+- **cp950 主控台**印中文會 `UnicodeEncodeError` → 測試腳本開頭 `sys.stdout.reconfigure(encoding="utf-8")`、或 `$env:PYTHONIOENCODING="utf-8"`。**piped heredoc 的中文字會被 PowerShell ASCII pipeline 轉成 `?`** → 測試含中文字面值時改用 Write 出 UTF-8 暫存 .py 再 `& $py file.py`，跑完刪。
 - `gr.Info/gr.Error` 在無 request context 下呼叫可能丟錯，但**動作（存檔/刪除）在它之前已執行**——查檔案系統確認結果即可。
 - 接線數量核對：`*PV`/`*R4`/`*FORM` 展開後逐項加總，要跟 handler `return` 的元素數一致（preview_bundle 末位含 assign_dd，共 4）。
 
