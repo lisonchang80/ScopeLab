@@ -1,25 +1,28 @@
-"""ScopeLab — 訓練分頁 UI（cls）。
+"""ScopeLab — 訓練分頁 UI（cls + det 統一）。
 
-選分類專案 → 選配方 → ▶ 開始訓練。事件用 **generator** 串流：逐 epoch `yield`
-更新 checkpoint 打勾清單、epoch 紀錄與進度條。torch / 訓練引擎只在 handler 內惰性 import，
-不拖慢 app 啟動；store / recipes 為輕量、可在建頁時 import。
+選專案（分類或偵測）→ 配方隨任務切換 → ▶ 開始訓練。事件用 **generator** 串流：
+逐 epoch yield 更新 checkpoint 打勾、epoch 紀錄與進度條。依專案 task 分派
+trainer_cls（torchvision ResNet）或 trainer_det（ultralytics YOLO）。
+torch / 訓練引擎只在 handler 內惰性 import；store / recipes 輕量、建頁時 import。
 """
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 
 import gradio as gr
 
 from .. import store
-from .recipes import RECIPES, DEFAULT_RECIPE, recipe_choices
+from .recipes import CLS_RECIPES, DET_RECIPES, DEFAULT_RECIPE, recipe_choices
 
 _PHASES = ["偵測裝置", "載入資料", "建立模型", "訓練", "產出 model_card"]
 
 
-def _cls_projects():
-    return [(f"{c['name']}（{len(c.get('classes', []))} 類）", c["slug"])
-            for c in store.list_projects() if c.get("task") == "cls"]
+def _all_projects():
+    out = []
+    for c in store.list_projects():
+        tn = "偵測" if c.get("task") == "det" else "分類"
+        out.append((f"{c['name']}（{tn}·{len(c.get('classes', []))} 類）", c["slug"]))
+    return out
 
 
 def _checklist(done: set, current: str | None) -> str:
@@ -41,12 +44,12 @@ def build_train_tab():
     with gr.Column(elem_classes="ls-panel"):
         gr.HTML('<div class="ls-modal-title">🏋 訓練　TRAIN</div>')
         with gr.Row(elem_classes="inforow"):
-            proj_dd = gr.Dropdown(_cls_projects(), label="選擇分類專案（cls）",
+            proj_dd = gr.Dropdown(_all_projects(), value=None, label="選擇專案（分類 cls / 偵測 det）",
                                   filterable=False, scale=4)
             refresh_btn = gr.Button("🔄", elem_classes="tbtn", scale=0, min_width=48)
             detect_btn = gr.Button("🔍 偵測裝置", elem_classes="tbtn", scale=0)
-        recipe_radio = gr.Radio(recipe_choices(), value=DEFAULT_RECIPE,
-                                label="配方", elem_classes="ls-fmt")
+        recipe_radio = gr.Radio(recipe_choices("cls"), value=DEFAULT_RECIPE,
+                                label="配方（隨任務切換）", elem_classes="ls-fmt")
         device_html = gr.HTML("<div class='infobar'>（按「偵測裝置」或開始訓練時自動偵測 GPU/CPU）</div>")
         train_btn = gr.Button("▶ 開始訓練", elem_classes="tbtn accent")
         with gr.Row(elem_classes="inforow"):
@@ -56,7 +59,11 @@ def build_train_tab():
 
     # ---- 事件 ----
     def on_refresh():
-        return gr.update(choices=_cls_projects())
+        return gr.update(choices=_all_projects())
+
+    def on_proj_change(slug):
+        task = (store.load_card(slug) or {}).get("task", "cls") if slug else "cls"
+        return gr.update(choices=recipe_choices(task), value=DEFAULT_RECIPE)
 
     def on_detect():
         from . import device
@@ -65,30 +72,40 @@ def build_train_tab():
 
     def on_train(slug, recipe_key, progress=gr.Progress()):
         if not slug:
-            raise gr.Error("請先選一個分類專案（cls）。")
-        from . import device, trainer_cls
+            raise gr.Error("請先選一個專案。")
+        from . import device
         card = store.load_card(slug) or {}
+        task = card.get("task", "cls")
         classes = card.get("classes", [])
         labels = store.load_labels(slug).get("labels", {})
         files = list(labels.keys())
-        if len(classes) < 2:
-            raise gr.Error("此專案類別少於 2 類，無法訓練分類器。")
+        if task == "cls" and len(classes) < 2:
+            raise gr.Error("分類專案需至少 2 類。")
+        if task == "det" and len(classes) < 1:
+            raise gr.Error("偵測專案需至少 1 類。")
 
         dev = device.pick_device()
-        E = RECIPES[recipe_key]["epochs"]
         out_dir = store.project_dir(slug) / "runs" / datetime.now().strftime("%Y%m%d-%H%M%S")
+        if task == "det":
+            from . import trainer_det
+            E = DET_RECIPES[recipe_key]["epochs"]
+            gen = trainer_det.train_det(card.get("name", slug), files, labels, classes,
+                                        recipe_key, dev, str(out_dir))
+        else:
+            from . import trainer_cls
+            E = CLS_RECIPES[recipe_key]["epochs"]
+            gen = trainer_cls.train_cls(card.get("name", slug), files, labels, classes,
+                                        recipe_key, dev, str(out_dir))
 
         done, current, eplog = set(), "偵測裝置", []
-        dev_line = f"<div class='infobar'>{device.device_summary(dev)}</div>"
+        dev_line = f"<div class='infobar'>{device.device_summary(dev)} · 任務 {task}</div>"
         progress(0.0, desc="準備中…")
-        # 起手：鎖按鈕、顯示裝置、清單就緒
         yield (gr.update(interactive=False), dev_line, _checklist(done, current),
                _epochlog(eplog), "")
         done.add("偵測裝置")
         current = "載入資料"
 
-        for ev in trainer_cls.train_cls(card.get("name", slug), files, labels, classes,
-                                        recipe_key, dev, str(out_dir)):
+        for ev in gen:
             ph = ev["phase"]
             if ph == "error":
                 yield (gr.update(interactive=True), dev_line, _checklist(done, None),
@@ -105,36 +122,41 @@ def build_train_tab():
             elif ph == "model":
                 done.add("建立模型")
                 current = "訓練"
-                pre = "預訓練" if ev["pretrained"] else "從頭訓"
+                pre = "預訓練" if ev.get("pretrained") else "從頭訓"
                 eplog.append(f"模型：{ev['arch']}（{pre}）· batch {ev['batch']}")
             elif ph == "epoch":
                 tick = "✅" if ev["improved"] else "・"
-                warn = ("　⚠️ " + "；".join(ev["warnings"])) if ev.get("warnings") else ""
+                if "map50" in ev:                      # det
+                    sc = f"mAP50 {ev['map50']:.3f} · best {ev['best_map50']:.3f}"
+                else:                                  # cls
+                    sc = f"acc {ev['val_acc']:.3f} · F1 {ev['val_f1']:.3f} · best {ev['best_acc']:.3f}"
                 g = ev.get("gpu") or {}
                 gtxt = (f"　[GPU {g['util']}% {g['temp']}°C {g['mem_used_gb']}/{g['mem_total_gb']}GB]"
                         if g.get("util") is not None else "")
-                eplog.append(f"{tick} Epoch {ev['epoch']}/{ev['total']} · "
-                             f"acc {ev['val_acc']:.3f} · F1 {ev['val_f1']:.3f} · "
-                             f"best {ev['best_acc']:.3f}{gtxt}{warn}")
-                progress(ev["epoch"] / ev["total"], desc=f"Epoch {ev['epoch']}/{ev['total']}")
+                warn = ("　⚠️ " + "；".join(ev["warnings"])) if ev.get("warnings") else ""
+                eplog.append(f"{tick} Epoch {ev['epoch']}/{ev['total']} · {sc}{gtxt}{warn}")
+                progress(ev["epoch"] / max(1, ev["total"]), desc=f"Epoch {ev['epoch']}/{ev['total']}")
             elif ph == "done":
-                done.update(["訓練", "產出 model_card"])
+                done.update(["建立模型", "訓練", "產出 model_card"])
                 current = None
                 s = ev["summary"]
-                result_html_val = (
+                if "best_map50" in s:
+                    sname, score, arch = "mAP50", s["best_map50"], s.get("model", "")
+                else:
+                    sname, score, arch = "val acc", s["best_val_acc"], s.get("arch", "")
+                result = (
                     "<div class='train-done'>✅ 訓練完成<br>"
-                    f"best val acc <b>{s['best_val_acc']:.3f}</b> · {s['arch']} · "
-                    f"{s['epochs']} epoch<br>"
+                    f"{sname} <b>{score:.3f}</b> · {arch} · {s['epochs']} epoch<br>"
                     f"權重 <code>{ev['weights']}</code><br>"
                     f"識別卡 <code>{ev['model_card']}</code></div>")
                 yield (gr.update(interactive=True), dev_line, _checklist(done, None),
-                       _epochlog(eplog), result_html_val)
+                       _epochlog(eplog), result)
                 return
-            # 訓練進行中：按鈕維持鎖住（gr.update() 不更動 interactive）
-            yield (gr.update(), dev_line, _checklist(done, current),
-                   _epochlog(eplog), "")
+            # 進行中：按鈕維持鎖住
+            yield (gr.update(), dev_line, _checklist(done, current), _epochlog(eplog), "")
 
     refresh_btn.click(on_refresh, None, proj_dd)
+    proj_dd.change(on_proj_change, [proj_dd], [recipe_radio])
     detect_btn.click(on_detect, None, device_html)
     train_btn.click(on_train, [proj_dd, recipe_radio],
                     [train_btn, device_html, check_html, eplog_html, result_html])
