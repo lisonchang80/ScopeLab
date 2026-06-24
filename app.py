@@ -23,6 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from src import store, imaging, exporter
 from src.store import TOTAL, NULL, DONE, TODO, ADDCLASS, TASKS
 
+# 工具列『指派分類』下拉未選圖時顯示的提示（並虛化）；比照 ClinScope「⇄ 切換分類」
+ASSIGN_HINT = "⇄ 指派分類"
+
 
 # ============================================================================
 #  狀態
@@ -240,12 +243,24 @@ def render4(S):
 # ============================================================================
 #  右上「影像編輯」視窗：預覽 + 給編輯器的資料
 # ============================================================================
+def assign_update(S):
+    """工具列『指派分類』下拉狀態（比照 ClinScope「⇄ 切換分類」）：
+    未選圖 / 非 cls → 顯示提示 ASSIGN_HINT 並虛化；已選圖 → 啟用、值為該圖目前分類。"""
+    on = (S.get("task") == "cls") and bool(S.get("selected"))
+    if not on:
+        return gr.update(choices=[ASSIGN_HINT], value=ASSIGN_HINT, interactive=False)
+    cur = _cls_of(S["labels"], S["selected"])
+    return gr.update(choices=[ASSIGN_HINT] + list(S.get("classes") or []),
+                     value=(cur or ASSIGN_HINT), interactive=True)
+
+
 def preview_bundle(S, open_editor=False):
-    """回傳 [preview_img, data_box(json), preview_meta]。"""
+    """回傳 [preview_img, data_box(json), preview_meta, assign_dd]。"""
     f = S.get("selected")
     if not f:
         return (gr.update(value=None), gr.update(value="{}"),
-                gr.update(value="選一張影像檢視；點圖可放大編輯。", visible=True))
+                gr.update(value="選一張影像檢視；點圖可放大編輯。", visible=True),
+                assign_update(S))
     dp = imaging.display_path(f, S["edits"])
     if S["task"] == "det":
         boxes = _boxes_of(S["labels"], f)
@@ -263,7 +278,7 @@ def preview_bundle(S, open_editor=False):
         "cls": ((_cls_of(S["labels"], f) or "") if S["task"] == "cls" else ""),
     }
     return (gr.update(value=img), gr.update(value=json.dumps(payload, ensure_ascii=False)),
-            gr.update(value=meta, visible=True))
+            gr.update(value=meta, visible=True), assign_update(S))
 
 
 # ============================================================================
@@ -281,7 +296,9 @@ def _form(card):
 
 
 def on_proj_change(slug, S):
-    card = store.load_card(slug)
+    # 按「🆕 新專案」會把專案下拉設成 None，連帶觸發本 change 事件；
+    # slug 為空時視同新專案，回空白表單而非去 load_card(None) 崩潰。
+    card = store.load_card(slug) if slug else None
     if not card:
         return (S, *_form(store.blank_card()), *render4(S), info_text(S),
                 *preview_bundle(S))
@@ -323,15 +340,12 @@ def on_save_card(name, disc, task, author, ver, lic, desc, classes_txt, S):
     persist(S)
     gr.Info(f"✅ 已儲存專案「{card['name']}」→ projects/{card['slug']}/")
     return (S, gr.update(choices=project_choices(), value=card["slug"]),
-            info_text(S), *render4(S),
-            gr.update(interactive=(S["task"] == "cls"), choices=S["classes"]))
+            info_text(S), *render4(S), assign_update(S))
 
 
 def on_task_change(task, S):
     S["task"], S["page"], S["selected"] = task, TOTAL, None
-    return (S, *render4(S),
-            gr.update(interactive=(task == "cls"), choices=S["classes"], value=None),
-            info_text(S))
+    return (S, *render4(S), assign_update(S), info_text(S))
 
 
 # ============================================================================
@@ -382,13 +396,11 @@ def on_page(page, S):
 
 
 def on_assign(cls, S):
-    """工具列『指派分類』下拉：把選取影像設為該類別（cls）。"""
+    """工具列『指派分類』下拉：把選取影像設為該類別（cls）。
+    ASSIGN_HINT（提示值）與空值不視為指派。"""
     f = S.get("selected")
-    if S["task"] == "cls" and f:
-        if cls:
-            S["labels"][f] = cls
-        else:
-            S["labels"].pop(f, None)
+    if S["task"] == "cls" and f and cls and cls != ASSIGN_HINT and cls in S["classes"]:
+        S["labels"][f] = cls
         persist(S)
     return (S, *render4(S), *preview_bundle(S), info_text(S))
 
@@ -426,7 +438,8 @@ def on_bridge(payload, S):
             S["selected"] = f
         pv = preview_bundle(S, open_editor=(a == "sel_edit"))
         out = list(_noop(S))
-        out[5], out[6], out[7] = pv          # preview, data, meta
+        out[5], out[6], out[7] = pv[0], pv[1], pv[2]   # preview, data, meta
+        out[9] = pv[3]                                  # assign_dd 狀態（已選圖 → 啟用）
         return tuple(out)
 
     if a == "cls":
@@ -442,7 +455,7 @@ def on_bridge(payload, S):
         r = render4(S)
         pv = preview_bundle(S)
         return (S, r[0], r[1], r[2], r[3], pv[0], pv[1], pv[2],
-                gr.update(), gr.update(), info_text(S))
+                gr.update(), pv[3], info_text(S))
 
     if a == "addclass":
         name = (obj.get("name") or "").strip()
@@ -455,7 +468,7 @@ def on_bridge(payload, S):
         r = render4(S)
         return (S, r[0], r[1], r[2], r[3], gr.update(), gr.update(), gr.update(),
                 gr.update(value="、".join(S["classes"])),
-                gr.update(choices=S["classes"]), info_text(S))
+                assign_update(S), info_text(S))
 
     if a == "editor_save":
         f = obj.get("path") or S.get("selected")
@@ -482,7 +495,7 @@ def on_bridge(payload, S):
         r = render4(S)
         pv = preview_bundle(S)
         return (S, r[0], r[1], r[2], r[3], pv[0], pv[1], pv[2],
-                gr.update(), gr.update(), info_text(S))
+                gr.update(), pv[3], info_text(S))
 
     return _noop(S)
 
@@ -550,6 +563,40 @@ def on_export_confirm(fmt, S):
             gr.update(value=path, visible=is_zip),  # 下載
             gr.update(value="", visible=False),     # 清警告
             gr.update(value="開始匯出"))            # 按鈕還原
+
+
+# ============================================================================
+#  刪除專案
+# ============================================================================
+def on_del_open(S):
+    choices = project_choices()
+    if not choices:
+        raise gr.Error("目前沒有任何已儲存的專案可刪除。")
+    # 不預選，強迫使用者刻意挑選要刪的專案（破壞性動作）
+    return (gr.update(visible=True), gr.update(choices=choices, value=None))
+
+
+def on_del_confirm(del_slug, S):
+    if not del_slug:
+        raise gr.Error("請先選擇要刪除的專案。")
+    name = next((c["name"] for c in store.list_projects() if c["slug"] == del_slug), del_slug)
+    try:
+        store.delete_project(del_slug)
+    except Exception as e:  # 占用/權限等 → 乾淨錯誤提示，不讓 handler 崩潰
+        raise gr.Error(f"刪除失敗：{e}")
+    gr.Info(f"🗑 已刪除專案「{name}」")
+
+    if S.get("slug") == del_slug:
+        # 刪到目前開啟的專案 → 重置成空白新專案
+        card = store.blank_card()
+        S = new_state(card)
+        return (gr.update(visible=False), gr.update(choices=project_choices(), value=None),
+                S, *_form(card), *render4(S), info_text(S), *preview_bundle(S))
+    # 刪的是其他專案 → 保留目前畫面，只刷新切換下拉
+    card = store.load_card(S["slug"]) if S.get("slug") else store.blank_card()
+    return (gr.update(visible=False),
+            gr.update(choices=project_choices(), value=S.get("slug") or None),
+            S, *_form(card), *render4(S), info_text(S), *preview_bundle(S))
 
 
 # ============================================================================
@@ -626,6 +673,11 @@ footer{display:none!important;}
 /* 基本資料表單：壓縮間距 + 內部捲動（panel 固定高，phead 不動、表單區捲） */
 .infoscroll{flex:1 1 0!important; min-height:0!important; overflow-y:auto!important; overflow-x:hidden!important;
   display:flex!important; flex-direction:column!important; gap:7px!important; padding-right:6px;}
+/* 整列單一欄位（專案名稱／類別清單／說明）會被 Gradio 包進 .form 包裝層；
+   在固定高度的 flex 欄裡，flex-shrink 會把這些 .form 壓成 ~10px → 幾乎看不見
+   （.inforow 列因內容撐住不受影響）。只針對 .form：不收縮、保留自然高度，
+   超出由 .infoscroll 內部捲動。 */
+.infoscroll > .form{flex:0 0 auto!important;}
 .infowin .gap{gap:7px!important;}
 .infowin .block{padding:0!important; min-width:0!important;}
 .inforow{gap:8px!important;}
@@ -654,9 +706,19 @@ footer{display:none!important;}
 .tbtn.primary:hover{background:var(--navy-900)!important;}
 .tbtn.accent{background:var(--lemon)!important; color:var(--navy-900)!important; border-color:var(--lemon)!important;}
 .tbtn.navy2{background:var(--navy-500)!important; color:#fff!important; border-color:var(--navy-500)!important;}
-.shortdd{min-width:120px!important; max-width:170px!important; flex:0 0 auto!important;}
+/* 危險動作：開啟刪除對話框=紅框；真正執行刪除=紅底 */
+.tbtn.danger{background:#fff!important; color:#C0392B!important; border-color:#E0A6A0!important;}
+.tbtn.danger:hover{background:#FBECEA!important; border-color:#C0392B!important;}
+.tbtn.danger-solid{background:#E74C3C!important; color:#fff!important; border-color:#E74C3C!important;}
+.tbtn.danger-solid:hover{background:#C0392B!important; border-color:#C0392B!important;}
+/* 專案下拉旁的「新專案／刪除專案」直向疊放 */
+.projbtns{gap:5px!important; align-self:flex-end;}
+.projbtns .tbtn{width:100%!important;}
+.shortdd{min-width:118px!important; max-width:160px!important; flex:0 0 auto!important;}
 .shortdd .wrap, .shortdd input{font-size:13px!important;}
-.shortdd input:disabled{opacity:.45!important; cursor:not-allowed;}
+/* 『指派分類』未選圖時虛化（比照 ClinScope；disable / readonly 兩種狀態都涵蓋） */
+.shortdd input:disabled, .shortdd input[disabled], .assigndd input[readonly]{
+  opacity:.5!important; cursor:not-allowed;}
 
 .countbar{font-size:12.5px; color:var(--navy-700); background:#F2F7FE; border:1px solid var(--line);
   border-radius:8px; padding:6px 12px!important; margin:6px 0;}
@@ -1196,9 +1258,13 @@ def build():
                 gr.HTML(panel_head("基本資料", "BASIC INFO", "要做的模型 / 資料集資訊"))
                 with gr.Column(elem_classes="infoscroll"):
                     with gr.Row(elem_classes="inforow"):
-                        proj_dd = gr.Dropdown(projs, value=init_slug or None, label="專案", scale=4)
-                        new_btn = gr.Button("🆕 新專案", elem_classes="tbtn", scale=0)
-                    name_tb = gr.Textbox(init_card.get("name", ""), label="專案名稱", placeholder="例：周邊血球五分類")
+                        proj_dd = gr.Dropdown(projs, value=init_slug or None, label="切換專案（選既有的）",
+                                              filterable=False, scale=4)
+                        with gr.Column(scale=0, min_width=128, elem_classes="projbtns"):
+                            new_btn = gr.Button("🆕 新專案", elem_classes="tbtn", scale=0)
+                            del_btn = gr.Button("🗑 刪除專案", elem_classes="tbtn danger", scale=0)
+                    name_tb = gr.Textbox(init_card.get("name", ""), label="專案名稱（新專案在這裡命名）",
+                                         placeholder="例：周邊血球五分類")
                     with gr.Row(elem_classes="inforow"):
                         disc_tb = gr.Textbox(init_card.get("discipline", ""), label="科別 / 領域", placeholder="血液 / 材料…", scale=3)
                         task_radio = gr.Radio([("分類", "cls"), ("偵測", "det")], value=init_card.get("task", "cls"),
@@ -1229,8 +1295,10 @@ def build():
                     folder_btn = gr.Button("📁 選擇資料夾", elem_classes="tbtn", scale=0)
                     view_dd = gr.Dropdown(["👁 詳細資料", "👁 圖示"], value="👁 詳細資料",
                                           show_label=False, container=False, elem_classes="shortdd")
-                    assign_dd = gr.Dropdown(S0["classes"], label=None, show_label=False, container=False,
-                                            interactive=(S0["task"] == "cls"), elem_classes="shortdd")
+                    # 比照 ClinScope「⇄ 切換分類」：提示文字當下拉值、未選圖虛化、與按鈕同列
+                    assign_dd = gr.Dropdown([ASSIGN_HINT], value=ASSIGN_HINT, show_label=False,
+                                            container=False, interactive=False,
+                                            elem_classes="shortdd assigndd")
                     export_btn = gr.Button("💾 匯出資料集", elem_classes="tbtn accent", scale=0)
                 count_md = gr.Markdown("", visible=False, elem_classes="countbar")
                 page_radio = gr.Radio(page_choices(S0), value=TOTAL, show_label=False,
@@ -1254,12 +1322,28 @@ def build():
                     export_cancel = gr.Button("取消", elem_classes="tbtn", scale=0)
                     export_ok = gr.Button("開始匯出", elem_classes="tbtn accent", scale=0)
 
+        # ---- 刪除專案對話框 ----
+        with gr.Column(visible=False, elem_classes="ls-modal-backdrop") as del_modal:
+            with gr.Column(elem_classes="ls-modal-box"):
+                gr.HTML('<div class="ls-modal-title">🗑 刪除專案</div>')
+                # 用 Radio 列出專案（避開「visible 切換時 Dropdown 不掛載」的 Gradio 雷）
+                del_pick = gr.Radio(project_choices(), value=None,
+                                    label="選擇要刪除的專案", elem_classes="ls-fmt")
+                gr.HTML('⚠️ 刪除後<b>無法復原</b>：該專案的基本資料、標註與編輯影像'
+                        '（<code>projects/&lt;slug&gt;/</code> 整個資料夾）會被永久移除。',
+                        elem_classes="ls-modal-warn", visible=True)
+                with gr.Row(elem_classes="ls-modal-actions"):
+                    del_cancel = gr.Button("取消", elem_classes="tbtn", scale=0)
+                    del_ok = gr.Button("🗑 確定刪除", elem_classes="tbtn danger-solid", scale=0)
+
         gr.HTML(FOOTER_HTML)
 
         # ---- 輸出組 ----
         FORM = [name_tb, disc_tb, task_radio, author_tb, ver_tb, lic_tb, desc_tb, cls_tb]
         R4 = [page_radio, gallery, detail_html, count_md]
-        PV = [preview_img, data_box, preview_meta]
+        # PV 末尾含 assign_dd：凡是用 *PV 的事件都會自動同步『指派分類』下拉的
+        # 選項/值/啟用狀態（preview_bundle 第 4 個回傳值 = assign_update）
+        PV = [preview_img, data_box, preview_meta, assign_dd]
         BRIDGE_OUT = [S, page_radio, gallery, detail_html, count_md,
                       preview_img, data_box, preview_meta, cls_tb, assign_dd, info_md]
 
@@ -1281,6 +1365,11 @@ def build():
         export_cancel.click(lambda: gr.update(visible=False), None, [export_modal])
         export_ok.click(on_export_confirm, [export_fmt, S],
                         [export_modal, export_file, export_warn, export_ok])
+
+        del_btn.click(on_del_open, [S], [del_modal, del_pick])
+        del_cancel.click(lambda: gr.update(visible=False), None, [del_modal])
+        del_ok.click(on_del_confirm, [del_pick, S],
+                     [del_modal, proj_dd, S, *FORM, *R4, info_md, *PV])
 
         # 初始渲染：讓 gallery / detail 都先掛載，再依檢視模式收起其一
         demo.load(lambda s: render4(s), [S], R4)

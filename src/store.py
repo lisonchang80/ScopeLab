@@ -11,7 +11,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import stat
 import unicodedata
 from datetime import date
 from pathlib import Path
@@ -95,6 +98,8 @@ def list_projects() -> list[dict]:
 
 
 def load_card(slug: str) -> dict | None:
+    if not slug:                 # 新專案 / 未存檔：slug 為 None 或 ""
+        return None
     cp = card_path(slug)
     if not cp.is_file():
         return None
@@ -116,10 +121,32 @@ def save_card(card: dict) -> dict:
 
 
 def delete_project(slug: str) -> None:
-    import shutil
+    """刪除整個專案資料夾。健壯處理 Windows 唯讀／占用，失敗則丟出明確錯誤
+    （不靜默放過，呼叫端才能提示使用者）。"""
+    if not slug:
+        return
     d = project_dir(slug)
+    if not d.exists():
+        return
+
+    def _onerror(func, p, _exc):
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except Exception:
+            pass
+
+    for _ in range(3):
+        if not d.exists():
+            return
+        try:
+            shutil.rmtree(d, onexc=lambda f, p, e: _onerror(f, p, e))
+        except TypeError:  # Python < 3.12 沒有 onexc
+            shutil.rmtree(d, onerror=_onerror)
     if d.exists():
-        shutil.rmtree(d, ignore_errors=True)
+        raise RuntimeError(
+            f"無法刪除專案資料夾：{d}\n"
+            "可能它正在檔案總管中開啟，或裡面有檔案被其他程式占用。請關閉後再試一次。")
 
 
 # ---- labels --------------------------------------------------------------
