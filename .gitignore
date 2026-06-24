@@ -6,3 +6,4 @@ projects/*/edited/
 # 保留範例專案的 card.json / labels.json，忽略大量影像快取
 .DS_Store
 Thumbs.db
+projects/*/runs/
