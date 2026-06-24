@@ -1,4 +1,4 @@
-"""LabelScope — 影像辨識標註工作台
+"""ScopeLab — 影像辨識標註工作台
 
 沿用 ClinScope 的三視窗版面與海軍藍／檸檬黃視覺，但用途改為「建立訓練用標註資料集」：
 
@@ -872,7 +872,7 @@ def panel_head(tag, en, sub):
 
 BRAND_HTML = (
     '<div class="brandbar"><div class="brand"><span class="logo">🏷️</span>'
-    '<span class="btext"><span class="bt">LabelScope</span>'
+    '<span class="btext"><span class="bt">ScopeLab</span>'
     '<span class="bsub">影像辨識標註工作台</span></span></div>'
     '<div class="bmeta"><span class="chip">分類 · 偵測</span>'
     '<span class="chip lemon">建立訓練資料集</span></div></div>')
@@ -1252,7 +1252,7 @@ POST_BRIDGE_JS = r"""
 # ============================================================================
 def build():
     # theme / css 在 Gradio 6 改由 launch() 傳入（見 launch_app）
-    with gr.Blocks(title="LabelScope — 影像辨識標註工作台") as demo:
+    with gr.Blocks(title="ScopeLab — 影像辨識標註工作台") as demo:
         gr.HTML(BRAND_HTML, elem_classes="brandwrap")
 
         projs = project_choices()
@@ -1396,14 +1396,14 @@ def build():
 
 
 def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **ov):
-    env_paths = os.environ.get("LABELSCOPE_ALLOWED_PATHS", "").strip()
+    env_paths = os.environ.get("SCOPELAB_ALLOWED_PATHS", "").strip()
     if env_paths:
         allowed = [p.strip() for p in env_paths.split(";") if p.strip() and Path(p.strip()).exists()]
     else:
         allowed = [f"{d}:\\" for d in "CDEFGHIJKLMNOPQRSTUVWXYZ" if Path(f"{d}:\\").exists()]
-    _u, _p = os.environ.get("LABELSCOPE_AUTH_USER"), os.environ.get("LABELSCOPE_AUTH_PASS")
+    _u, _p = os.environ.get("SCOPELAB_AUTH_USER"), os.environ.get("SCOPELAB_AUTH_PASS")
     auth = (_u, _p) if (_u and _p) else None
-    print(f"[LabelScope] {len(store.list_projects())} projects | allowed_paths={allowed} | auth={'on' if auth else 'off'}")
+    print(f"[ScopeLab] {len(store.list_projects())} projects | allowed_paths={allowed} | auth={'on' if auth else 'off'}")
     kw = dict(theme=THEME, css=CSS, allowed_paths=allowed,
               prevent_thread_lock=prevent_thread_lock, inbrowser=inbrowser)
     if auth:
@@ -1415,5 +1415,5 @@ def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **o
 
 
 if __name__ == "__main__":
-    # 專用埠 7861，避開 ClinScope 的 7860；可用 LABELSCOPE_PORT 覆寫
-    launch_app(server_port=int(os.environ.get("LABELSCOPE_PORT", "7861")))
+    # 專用埠 7861，避開 ClinScope 的 7860；可用 SCOPELAB_PORT 覆寫
+    launch_app(server_port=int(os.environ.get("SCOPELAB_PORT", "7861")))

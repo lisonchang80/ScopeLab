@@ -1,4 +1,4 @@
-"""LabelScope — 匯出。
+"""ScopeLab — 匯出。
 
 分類（cls）
   cls_folder  對接 ClinScope/MatScope：ImageFolder  exports/<slug>/<類別>/*.jpg  + card.json

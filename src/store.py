@@ -1,4 +1,4 @@
-"""LabelScope — 專案／標註持久層。
+"""ScopeLab — 專案／標註持久層。
 
 每個標註專案存在 projects/<slug>/：
   card.json    基本資料（名稱、科別、任務 cls/det、類別清單、作者…）

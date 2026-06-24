@@ -2,7 +2,7 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "labelscope",
+      "name": "scopelab",
       "runtimeExecutable": "D:\\Claude code\\ClinScope\\.venv\\Scripts\\python.exe",
       "runtimeArgs": ["app.py"],
       "port": 7861

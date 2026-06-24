@@ -1,4 +1,4 @@
-# LabelScope — 影像辨識標註工作台
+# ScopeLab — 影像辨識標註工作台
 
 建立「訓練用」影像標註資料集的桌面工具。沿用 [ClinScope](../ClinScope) 的三視窗版面與海軍藍／檸檬黃視覺，但用途從「辨識」改為「標註」：把一堆未分類影像，整理成可直接餵進 ClinScope / MatScope 訓練流程的資料集。
 
@@ -63,7 +63,7 @@ exports/               匯出輸出（git 忽略）
 
 ## 部署
 
-公開上線可比照 ClinScope：環境變數 `LABELSCOPE_AUTH_USER` / `LABELSCOPE_AUTH_PASS` 開帳密登入、
-`LABELSCOPE_ALLOWED_PATHS`（分號分隔）收緊可讀資料夾、`LABELSCOPE_PORT` 改埠（預設 7861）。
+公開上線可比照 ClinScope：環境變數 `SCOPELAB_AUTH_USER` / `SCOPELAB_AUTH_PASS` 開帳密登入、
+`SCOPELAB_ALLOWED_PATHS`（分號分隔）收緊可讀資料夾、`SCOPELAB_PORT` 改埠（預設 7861）。
 
 > 研究／作品集用途。

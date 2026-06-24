@@ -1,4 +1,4 @@
-"""LabelScope — 影像處理 helper。
+"""ScopeLab — 影像處理 helper。
 
 - load_rgb：讀圖為 RGB ndarray（給 gr.Image 預覽）
 - draw_boxes：把 det 標註框畫到影像上（預覽用）

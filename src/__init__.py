@@ -1,1 +1,1 @@
-"""LabelScope src 套件。"""
+"""ScopeLab src 套件。"""

@@ -1,11 +1,11 @@
 ---
 name: dev-verify
-description: LabelScope 啟動/重啟與改碼後的驗證流程。觸發詞：啟動/開啟/重啟 LabelScope、改了 app.py 要重啟、驗證 UI 改動、preview 連不上/截圖逾時。涉及 app.py、src/store.py、samples/make_samples.py，埠 7861，沿用 ClinScope venv。
+description: ScopeLab 啟動/重啟與改碼後的驗證流程。觸發詞：啟動/開啟/重啟 ScopeLab、改了 app.py 要重啟、驗證 UI 改動、preview 連不上/截圖逾時。涉及 app.py、src/store.py、samples/make_samples.py，埠 7861，沿用 ClinScope venv。
 ---
 
-# LabelScope 開發 / 驗證流程
+# ScopeLab 開發 / 驗證流程
 
-LabelScope 是單檔 Gradio（6.17.3）app（`app.py`），沿用 ClinScope 的 venv
+ScopeLab 是單檔 Gradio（6.17.3）app（`app.py`），沿用 ClinScope 的 venv
 `D:\Claude code\ClinScope\.venv\Scripts\python.exe`，跑埠 **7861**。**Gradio 無熱重載**——改碼一定要重啟程序才生效。
 
 ## 1. 常駐啟動（給使用者實際用）
@@ -18,17 +18,17 @@ $old = (Get-NetTCPConnection -State Listen -LocalPort 7861 -ErrorAction Silently
 foreach ($p in $old) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Milliseconds 700
 $py = "D:\Claude code\ClinScope\.venv\Scripts\python.exe"
-$proc = Start-Process -FilePath $py -ArgumentList "app.py" -WorkingDirectory "D:\Claude code\LabelScope" -WindowStyle Hidden -PassThru
+$proc = Start-Process -FilePath $py -ArgumentList "app.py" -WorkingDirectory "D:\Claude code\ScopeLab" -WindowStyle Hidden -PassThru
 # 輪詢就緒
 for ($i=0;$i -lt 25;$i++){ $c=Get-NetTCPConnection -State Listen -LocalPort 7861 -ErrorAction SilentlyContinue
-  if($c){ try{ $r=Invoke-WebRequest "http://127.0.0.1:7861/" -UseBasicParsing -TimeoutSec 5; if($r.StatusCode -eq 200 -and $r.Content -match "LabelScope"){"READY";break} }catch{} }; Start-Sleep -Milliseconds 800 }
+  if($c){ try{ $r=Invoke-WebRequest "http://127.0.0.1:7861/" -UseBasicParsing -TimeoutSec 5; if($r.StatusCode -eq 200 -and $r.Content -match "ScopeLab"){"READY";break} }catch{} }; Start-Sleep -Milliseconds 800 }
 ```
 
 改碼後重啟＝同一段（先 Stop-Process 該埠的 PID 再重起）。PowerShell 字串裡別用 `$var:`（會被當磁碟機），用 `${var}`。
 
 ## 2. 驗證改動（preview + DOM，**不要靠截圖/動態點擊**）
 
-這台的 preview 瀏覽器對 LabelScope 有幾個雷，靠它們驗證要繞開：
+這台的 preview 瀏覽器對 ScopeLab 有幾個雷，靠它們驗證要繞開：
 
 - **viewport 會歸零**：`window.innerWidth` 常是 0 → `30vh` 等全崩、量到的寬高是雜訊。
   **每次 `preview_start` 後先 `preview_resize` 明確指定 `width:1440, height:900`**（`preset:"desktop"` 會回 0），
@@ -47,8 +47,8 @@ handler 接線改動（尤其改了輸出組 `PV`/`R4`/`FORM` 或 `preview_bundl
 $py = "D:\Claude code\ClinScope\.venv\Scripts\python.exe"; $env:PYTHONIOENCODING="utf-8"
 @'
 import sys; sys.stdout.reconfigure(encoding="utf-8")
-sys.path.insert(0, r"D:\Claude code\LabelScope")
-import ast; ast.parse(open(r"D:\Claude code\LabelScope\app.py",encoding="utf-8").read()); print("AST OK")
+sys.path.insert(0, r"D:\Claude code\ScopeLab")
+import ast; ast.parse(open(r"D:\Claude code\ScopeLab\app.py",encoding="utf-8").read()); print("AST OK")
 import app; from src import store
 # 造假 state 呼叫 handler，len(回傳) 要等於該事件 outputs 清單長度
 '@ | & $py -

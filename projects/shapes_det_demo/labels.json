@@ -1,6 +1,6 @@
 {
   "labels": {
-    "D:\\Claude code\\LabelScope\\samples\\shapes_det\\scene_01.png": [
+    "D:\\Claude code\\ScopeLab\\samples\\shapes_det\\scene_01.png": [
       {
         "cls": "三角形",
         "x": 0.333333,
@@ -23,7 +23,7 @@
         "h": 0.25
       }
     ],
-    "D:\\Claude code\\LabelScope\\samples\\shapes_det\\scene_02.png": [
+    "D:\\Claude code\\ScopeLab\\samples\\shapes_det\\scene_02.png": [
       {
         "cls": "方形",
         "x": 0.329167,
@@ -39,7 +39,7 @@
         "h": 0.280556
       }
     ],
-    "D:\\Claude code\\LabelScope\\samples\\shapes_det\\scene_04.png": [
+    "D:\\Claude code\\ScopeLab\\samples\\shapes_det\\scene_04.png": [
       {
         "cls": "圓形",
         "x": 0.375,
@@ -69,7 +69,7 @@
         "h": 0.230556
       }
     ],
-    "D:\\Claude code\\LabelScope\\samples\\shapes_det\\scene_05.png": [
+    "D:\\Claude code\\ScopeLab\\samples\\shapes_det\\scene_05.png": [
       {
         "cls": "三角形",
         "x": 0.24375,
@@ -99,7 +99,7 @@
         "h": 0.183333
       }
     ],
-    "D:\\Claude code\\LabelScope\\samples\\shapes_det\\scene_07.png": [
+    "D:\\Claude code\\ScopeLab\\samples\\shapes_det\\scene_07.png": [
       {
         "cls": "圓形",
         "x": 0.4375,
@@ -129,7 +129,7 @@
         "h": 0.252778
       }
     ],
-    "D:\\Claude code\\LabelScope\\samples\\shapes_det\\scene_08.png": [
+    "D:\\Claude code\\ScopeLab\\samples\\shapes_det\\scene_08.png": [
       {
         "cls": "圓形",
         "x": 0.402083,
@@ -145,7 +145,7 @@
         "h": 0.163889
       }
     ],
-    "D:\\Claude code\\LabelScope\\samples\\shapes_det\\scene_10.png": [
+    "D:\\Claude code\\ScopeLab\\samples\\shapes_det\\scene_10.png": [
       {
         "cls": "方形",
         "x": 0.110417,
@@ -168,7 +168,7 @@
         "h": 0.175
       }
     ],
-    "D:\\Claude code\\LabelScope\\samples\\shapes_det\\scene_11.png": [
+    "D:\\Claude code\\ScopeLab\\samples\\shapes_det\\scene_11.png": [
       {
         "cls": "三角形",
         "x": 0.804167,
@@ -205,7 +205,7 @@
         "h": 0.197222
       }
     ],
-    "D:\\Claude code\\LabelScope\\samples\\shapes_det\\scene_13.png": [
+    "D:\\Claude code\\ScopeLab\\samples\\shapes_det\\scene_13.png": [
       {
         "cls": "方形",
         "x": 0.054167,
@@ -242,7 +242,7 @@
         "h": 0.177778
       }
     ],
-    "D:\\Claude code\\LabelScope\\samples\\shapes_det\\scene_14.png": [
+    "D:\\Claude code\\ScopeLab\\samples\\shapes_det\\scene_14.png": [
       {
         "cls": "三角形",
         "x": 0.527083,

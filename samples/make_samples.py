@@ -52,7 +52,7 @@ def make_cls():
     card = {
         "slug": "shapes_demo", "name": "形狀分類示範", "discipline": "示範",
         "task": "cls", "classes": [ZH[s] for s in SHAPES],
-        "author": "LabelScope", "version": "0.1.0", "license": "CC0",
+        "author": "ScopeLab", "version": "0.1.0", "license": "CC0",
         "description": "內建示範資料：幾何形狀三分類，用來展示標註流程與全螢幕編輯器。",
         "source_folder": str(out), "created": "2026-06-22", "updated": "2026-06-22",
     }
@@ -108,7 +108,7 @@ def make_det():
     card = {
         "slug": "shapes_det_demo", "name": "形狀偵測示範", "discipline": "示範",
         "task": "det", "classes": [ZH[s] for s in SHAPES],
-        "author": "LabelScope", "version": "0.1.0", "license": "CC0",
+        "author": "ScopeLab", "version": "0.1.0", "license": "CC0",
         "description": "內建偵測示範：每張影像散佈多個形狀，逐一畫框標出，"
                        "展示全螢幕標註器與 YOLO/COCO 多框匯出。",
         "source_folder": str(out), "created": "2026-06-22", "updated": "2026-06-24",
