@@ -598,6 +598,17 @@ def on_start_train(S):
             gr.update(choices=recipe_choices(task), value=DEFAULT_RECIPE))  # 配方隨任務
 
 
+def on_goto_infer(last_run):
+    """訓練完成後『用此模型推論』：切到推論分頁、帶入該專案與剛訓好的 run。"""
+    if not last_run or not last_run.get("weights"):
+        raise gr.Error("尚無已訓練的模型，請先在訓練分頁完成一次訓練。")
+    slug, weights = last_run["slug"], last_run["weights"]
+    gr.Info("🔍 已帶剛訓練的模型到推論分頁")
+    return (gr.update(selected="infer"),
+            gr.update(choices=infer.tab._all_projects(), value=slug),
+            gr.update(choices=infer.tab._runs(slug), value=weights))
+
+
 # ============================================================================
 #  刪除專案
 # ============================================================================
@@ -1381,9 +1392,10 @@ def build():
                             del_ok = gr.Button("🗑 確定刪除", elem_classes="tbtn danger-solid", scale=0)
 
             with gr.Tab("🏋 訓練", id="train"):
-                train_proj_dd, train_recipe_radio = train.build_train_tab()
+                (train_proj_dd, train_recipe_radio,
+                 train_infer_btn, train_last_run) = train.build_train_tab()
             with gr.Tab("🔍 推論", id="infer"):
-                infer.build_infer_tab()
+                infer_proj_dd, infer_run_dd = infer.build_infer_tab()
         gr.HTML(FOOTER_HTML)
 
         # ---- 輸出組 ----
@@ -1416,6 +1428,8 @@ def build():
 
         start_train_btn.click(on_start_train, [S],
                               [tabs, train_proj_dd, train_recipe_radio])
+        train_infer_btn.click(on_goto_infer, [train_last_run],
+                              [tabs, infer_proj_dd, infer_run_dd])
 
         del_btn.click(on_del_open, [S], [del_modal, del_pick])
         del_cancel.click(lambda: gr.update(visible=False), None, [del_modal])

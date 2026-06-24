@@ -137,3 +137,5 @@ def build_infer_tab():
     refresh_btn.click(on_refresh, [proj_dd], [proj_dd, run_dd])
     proj_dd.change(on_proj_change, [proj_dd], [run_dd])
     infer_btn.click(on_infer, [run_dd, files], [result_html, result_gallery])
+    # 回傳供「訓練」分頁『用此模型推論』跨頁帶入專案/run
+    return proj_dd, run_dd

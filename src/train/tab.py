@@ -51,7 +51,11 @@ def build_train_tab():
         recipe_radio = gr.Radio(recipe_choices("cls"), value=DEFAULT_RECIPE,
                                 label="配方（隨任務切換）", elem_classes="ls-fmt")
         device_html = gr.HTML("<div class='infobar'>（按「偵測裝置」或開始訓練時自動偵測 GPU/CPU）</div>")
-        train_btn = gr.Button("▶ 開始訓練", elem_classes="tbtn accent")
+        with gr.Row(elem_classes="inforow"):
+            train_btn = gr.Button("▶ 開始訓練", elem_classes="tbtn accent", scale=1)
+            infer_jump_btn = gr.Button("🔍 用此模型推論（訓練完成後可用）", interactive=False,
+                                       elem_classes="tbtn primary", scale=1)
+        last_run = gr.State(None)
         with gr.Row(elem_classes="inforow"):
             check_html = gr.HTML(_checklist(set(), None))
             eplog_html = gr.HTML("")
@@ -97,23 +101,27 @@ def build_train_tab():
             gen = trainer_cls.train_cls(card.get("name", slug), files, labels, classes,
                                         recipe_key, dev, str(out_dir))
 
-        done, current, eplog = set(), "偵測裝置", []
+        # 輸出順序：train_btn, infer_jump_btn, last_run, device_html, check_html, eplog_html, result_html
+        done, current, eplog, last = set(), "偵測裝置", [], None
         dev_line = f"<div class='infobar'>{device.device_summary(dev)} · 任務 {task}</div>"
         progress(0.0, desc="準備中…")
-        yield (gr.update(interactive=False), dev_line, _checklist(done, current),
-               _epochlog(eplog), "")
+        # 起手：鎖訓練鈕、推論鈕維持虛化
+        yield (gr.update(interactive=False), gr.update(interactive=False), last,
+               dev_line, _checklist(done, current), _epochlog(eplog), "")
         done.add("偵測裝置")
         current = "載入資料"
 
         for ev in gen:
             ph = ev["phase"]
             if ph == "error":
-                yield (gr.update(interactive=True), dev_line, _checklist(done, None),
-                       _epochlog(eplog), f"<div class='train-err'>❌ {ev['msg']}</div>")
+                yield (gr.update(interactive=True), gr.update(interactive=False), last,
+                       dev_line, _checklist(done, None), _epochlog(eplog),
+                       f"<div class='train-err'>❌ {ev['msg']}</div>")
                 return
             if ph == "stopped":
-                yield (gr.update(interactive=True), dev_line, _checklist(done, None),
-                       _epochlog(eplog), "<div class='train-err'>⏹ 已中止。</div>")
+                yield (gr.update(interactive=True), gr.update(interactive=False), last,
+                       dev_line, _checklist(done, None), _epochlog(eplog),
+                       "<div class='train-err'>⏹ 已中止。</div>")
                 return
             if ph == "data":
                 done.add("載入資料")
@@ -139,6 +147,7 @@ def build_train_tab():
             elif ph == "done":
                 done.update(["建立模型", "訓練", "產出 model_card"])
                 current = None
+                last = {"slug": slug, "weights": ev["weights"]}     # 帶給『用此模型推論』
                 s = ev["summary"]
                 if "best_map50" in s:
                     sname, score, arch = "mAP50", s["best_map50"], s.get("model", "")
@@ -149,16 +158,20 @@ def build_train_tab():
                     f"{sname} <b>{score:.3f}</b> · {arch} · {s['epochs']} epoch<br>"
                     f"權重 <code>{ev['weights']}</code><br>"
                     f"識別卡 <code>{ev['model_card']}</code></div>")
-                yield (gr.update(interactive=True), dev_line, _checklist(done, None),
-                       _epochlog(eplog), result)
+                # 完成 → 解鎖訓練鈕＋推論鈕、寫入 last_run
+                yield (gr.update(interactive=True), gr.update(interactive=True), last,
+                       dev_line, _checklist(done, None), _epochlog(eplog), result)
                 return
-            # 進行中：按鈕維持鎖住
-            yield (gr.update(), dev_line, _checklist(done, current), _epochlog(eplog), "")
+            # 進行中：訓練鈕鎖、推論鈕維持虛化、last 不變
+            yield (gr.update(), gr.update(), last,
+                   dev_line, _checklist(done, current), _epochlog(eplog), "")
 
     refresh_btn.click(on_refresh, None, proj_dd)
     proj_dd.change(on_proj_change, [proj_dd], [recipe_radio])
     detect_btn.click(on_detect, None, device_html)
     train_btn.click(on_train, [proj_dd, recipe_radio],
-                    [train_btn, device_html, check_html, eplog_html, result_html])
-    # 回傳供「標記」分頁的『開始訓練』跨頁帶入專案/配方
-    return proj_dd, recipe_radio
+                    [train_btn, infer_jump_btn, last_run,
+                     device_html, check_html, eplog_html, result_html])
+    # 回傳供 app 跨頁接線：標記頁『開始訓練』帶入(proj_dd/recipe_radio)、
+    # 訓練完『用此模型推論』帶出(infer_jump_btn/last_run)
+    return proj_dd, recipe_radio, infer_jump_btn, last_run
