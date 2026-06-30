@@ -19,8 +19,12 @@ from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PROJECTS = ROOT / "projects"
-PROJECTS.mkdir(exist_ok=True)
+# 資料根目錄：桌面安裝版把使用者資料導到 %LOCALAPPDATA%\ScopeLab（免寫進安裝夾、重裝不丟）。
+# 開發 / 公開站不設此環境變數 → 沿用 repo 根（既有 projects/ 照常）。
+_DATA = os.environ.get("SCOPELAB_DATA_DIR", "").strip()
+DATA_ROOT = Path(_DATA) if _DATA else ROOT
+PROJECTS = DATA_ROOT / "projects"
+PROJECTS.mkdir(parents=True, exist_ok=True)
 
 IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp", ".gif"}
 TASKS = {"cls": "分類", "det": "偵測"}

@@ -26,7 +26,7 @@ from PIL import Image
 from . import store
 from .imaging import display_path
 
-EXPORTS = store.ROOT / "exports"
+EXPORTS = store.DATA_ROOT / "exports"
 
 # 每個匯出格式落地的資料夾後綴（同一 tag 的格式共用一個資料夾）
 FMT_TAG = {

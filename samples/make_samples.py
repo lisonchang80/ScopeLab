@@ -6,12 +6,16 @@
 執行：  python samples/make_samples.py
 """
 import json
+import os
 import random
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-ROOT = Path(__file__).resolve().parent.parent
+# 桌面版首次啟動會設 SCOPELAB_DATA_DIR → demo 生成到使用者資料夾（寫入正確本機路徑）；
+# 直接執行本檔（dev）不設 → 沿用 repo 根。
+_BASE = os.environ.get("SCOPELAB_DATA_DIR", "").strip()
+ROOT = Path(_BASE) if _BASE else Path(__file__).resolve().parent.parent
 
 SHAPES = ["circle", "square", "triangle"]
 ZH = {"circle": "圓形", "square": "方形", "triangle": "三角形"}
