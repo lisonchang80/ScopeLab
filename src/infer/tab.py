@@ -1,9 +1,10 @@
 """ScopeLab — 推論分頁 UI（cls + det，三視窗外觀比照 ClinScope）。
 
 版面同 ClinScope 推論工作台：
-  上排  模型 MODEL（專案 + 訓練結果 run + 識別卡）｜顯示 DISPLAY（預覽選取的結果圖）
-  下排  結果 RESULT（拖入影像 → ▶ 批次推論 → 縮圖牆 + 明細表，點縮圖即在上方預覽）
+  上排  模型 MODEL（專案＋訓練結果 run 同一列 + 識別卡）｜顯示 DISPLAY（預覽選取的結果圖）
+  下排  結果 RESULT（📁 選資料夾 → ▶ 批次推論 → 縮圖牆 + .ls-dt 明細表，點縮圖即在上方預覽）
 依 run 的 model_card.task 分派：cls → 機率；det → 已畫框影像。
+影像來源比照 ClinScope 與本專案「標記」分頁：原生資料夾選取器（非拖拉上傳框）。
 torch / 推論引擎只在 handler 內惰性 import；store 輕量、建頁時 import。
 """
 from __future__ import annotations
@@ -20,6 +21,23 @@ from .. import store
 def _phead(tag, en, sub):     # 比照 app.panel_head（避免 infer→app 循環 import，這裡複製）
     return (f'<div class="phead"><div><span class="ph-tag">{tag}</span>'
             f'<span class="ph-en">{en}</span></div><span class="ph-sub">{sub}</span></div>')
+
+
+def _pick_dir():              # 原生資料夾選取器（同 app._native_dir，避免循環 import 複製一份）
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askdirectory(title="選擇推論影像資料夾")
+        try:
+            root.destroy()
+        except Exception:
+            pass
+        return path or ""
+    except Exception:
+        return ""
 
 
 def _all_projects():
@@ -80,32 +98,44 @@ def _run_task(weights):
     return "cls"
 
 
+_EMPTY = ('<div class="ls-empty-state"><div class="es-ic">🔍</div>'
+          '<div class="es-t">尚無推論結果</div>'
+          '<div class="es-s">在上方<b>選專案與訓練結果（run）</b>，按下方 '
+          '<b>📁 選擇資料夾</b> 載入影像，再按 <b>▶ 批次推論</b>。</div></div>')
+
+
 def _cls_table(res):
+    head = "<tr><th>影像</th><th>預測</th><th>信心</th><th>Top-3</th></tr>"
     rows = []
-    for r in res:
+    for i, r in enumerate(res):
         name = html.escape(Path(r["path"]).name)
         if not r.get("ok"):
-            rows.append(f"<tr><td>{name}</td><td colspan='3' class='infer-bad'>讀取失敗</td></tr>")
+            rows.append(f'<tr class="ls-row" data-i="{i}"><td class="ls-name">{name}</td>'
+                        f'<td colspan="3" class="infer-bad">讀取失敗</td></tr>')
             continue
         pred, conf = r["top"][0]
         t3 = "　".join(f"{html.escape(c)} {p * 100:.0f}%" for c, p in r["top"])
-        rows.append(f"<tr><td>{name}</td><td><b>{html.escape(pred)}</b></td>"
-                    f"<td>{conf * 100:.1f}%</td><td class='infer-top'>{t3}</td></tr>")
-    return ("<table class='infer-tbl'><thead><tr><th>影像</th><th>預測</th><th>信心</th>"
-            "<th>Top-3</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
+        rows.append(f'<tr class="ls-row" data-i="{i}"><td class="ls-name" title="{name}">{name}</td>'
+                    f'<td><b>{html.escape(pred)}</b></td><td>{conf * 100:.1f}%</td>'
+                    f'<td class="infer-top">{t3}</td></tr>')
+    return (f'<div class="ls-dt-wrap"><table class="ls-dt"><thead>{head}</thead>'
+            f'<tbody>{"".join(rows)}</tbody></table></div>')
 
 
 def _det_table(res):
+    head = "<tr><th>影像</th><th>框數</th><th>偵測（前幾項）</th></tr>"
     rows = []
-    for r in res:
+    for i, r in enumerate(res):
         name = html.escape(Path(r["path"]).name)
         if not r["dets"]:
-            rows.append(f"<tr><td>{name}</td><td>0</td><td>（無偵測）</td></tr>")
+            rows.append(f'<tr class="ls-row" data-i="{i}"><td class="ls-name" title="{name}">{name}</td>'
+                        f'<td>0</td><td class="infer-top">（無偵測）</td></tr>')
             continue
         tops = "　".join(f"{html.escape(n)} {c * 100:.0f}%" for n, c in r["dets"][:6])
-        rows.append(f"<tr><td>{name}</td><td><b>{len(r['dets'])}</b></td><td class='infer-top'>{tops}</td></tr>")
-    return ("<table class='infer-tbl'><thead><tr><th>影像</th><th>框數</th>"
-            "<th>偵測（前幾項）</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
+        rows.append(f'<tr class="ls-row" data-i="{i}"><td class="ls-name" title="{name}">{name}</td>'
+                    f'<td><b>{len(r["dets"])}</b></td><td class="infer-top">{tops}</td></tr>')
+    return (f'<div class="ls-dt-wrap"><table class="ls-dt det"><thead>{head}</thead>'
+            f'<tbody>{"".join(rows)}</tbody></table></div>')
 
 
 def _cls_meta(r):
@@ -121,7 +151,8 @@ def _det_meta(r):
 
 
 def build_infer_tab():
-    res_state = gr.State([])
+    res_state = gr.State([])       # 預覽用：[{img, meta}]（推論前=原圖、推論後=結果）
+    picked = gr.State([])          # 已選資料夾的影像路徑清單
 
     with gr.Row(equal_height=False, elem_classes="toprow"):
         with gr.Column(scale=5, elem_classes="ls-panel"):
@@ -129,25 +160,24 @@ def build_infer_tab():
             with gr.Row(elem_classes="inforow"):
                 proj_dd = gr.Dropdown(_all_projects(), value=None, label="專案（分類 / 偵測）",
                                       filterable=False, scale=3)
-                refresh_btn = gr.Button("🔄", elem_classes="tbtn", scale=0, min_width=48)
-            run_dd = gr.Dropdown([], label="訓練結果（run）", filterable=False)
+                run_dd = gr.Dropdown([], label="訓練結果（run）", filterable=False, scale=4)
+                refresh_btn = gr.Button("🔄", elem_classes="tbtn", scale=0, min_width=46)
             card_md = gr.Markdown("", elem_classes="infobar")
         with gr.Column(scale=6, elem_classes="ls-panel"):
             gr.HTML(_phead("顯示", "DISPLAY", "點下方結果縮圖即在此預覽"))
-            preview_img = gr.Image(show_label=False, elem_classes="preview")
-            preview_meta = gr.Markdown("批次推論後，點任一結果縮圖檢視。", elem_classes="pmeta")
+            preview_img = gr.Image(show_label=False, height=520, elem_classes="preview")
+            preview_meta = gr.Markdown("", visible=False, elem_classes="pmeta")
 
     with gr.Row(elem_classes="editrow"):
         with gr.Column(elem_classes="ls-panel"):
-            gr.HTML(_phead("結果", "RESULT", "拖入影像 → ▶ 批次推論 → 逐張結果"))
+            gr.HTML(_phead("結果", "RESULT", "選資料夾 → 批次推論 → 逐張結果"))
             with gr.Row(elem_classes="toolbar"):
-                files = gr.File(file_count="multiple", type="filepath", file_types=["image"],
-                                label="拖入 / 選擇影像（可多張）", scale=3)
+                pick_btn = gr.Button("📁 選擇資料夾", elem_classes="tbtn", scale=0)
                 infer_btn = gr.Button("▶ 批次推論", elem_classes="tbtn primary", scale=0)
             count_md = gr.Markdown("", visible=False, elem_classes="countbar")
-            result_gallery = gr.Gallery(show_label=False, columns=6, object_fit="cover",
+            result_gallery = gr.Gallery(show_label=False, columns=8, object_fit="cover",
                                         allow_preview=False, elem_classes="grid")
-            result_html = gr.HTML("", elem_classes="detail")
+            result_html = gr.HTML(_EMPTY, elem_classes="detail")
 
     # ---- 事件 ----
     def on_proj_change(slug):
@@ -161,12 +191,24 @@ def build_infer_tab():
     def on_refresh(slug):
         return gr.update(choices=_all_projects()), gr.update(choices=_runs(slug))
 
-    def on_infer(weights, paths, progress=gr.Progress()):
+    def on_pick():
+        path = _pick_dir()
+        if not path:
+            return gr.update(), gr.update(), gr.update(), gr.update()
+        files = store.scan_folder(path)
+        n = len(files)
+        gallery = [(p, Path(p).name) for p in files]
+        items = [{"img": p, "meta": "（尚未推論）"} for p in files]
+        head = (f"📂 已載入 {n} 張 · 按 ▶ 批次推論" if n
+                else "⚠️ 此資料夾沒有支援的影像檔")
+        return (files, gr.update(value=head, visible=True),
+                gr.update(value=gallery), items)
+
+    def on_infer(weights, plist, progress=gr.Progress()):
         if not weights:
             raise gr.Error("請先選一個訓練結果（run）；若沒有，先到「訓練」分頁訓一個。")
-        if not paths:
-            raise gr.Error("請先拖入至少一張影像。")
-        plist = paths if isinstance(paths, list) else [paths]
+        if not plist:
+            raise gr.Error("請先按「📁 選擇資料夾」載入影像。")
         from ..train import device
         dstr = device.pick_device()["device"]
         task = _run_task(weights)
@@ -198,12 +240,13 @@ def build_infer_tab():
         if not items or i is None or i >= len(items):
             return gr.update(), gr.update()
         it = items[i]
-        return gr.update(value=it["img"]), it["meta"]
+        return gr.update(value=it["img"]), gr.update(value=it["meta"], visible=True)
 
     refresh_btn.click(on_refresh, [proj_dd], [proj_dd, run_dd])
     proj_dd.change(on_proj_change, [proj_dd], [run_dd, card_md])
     run_dd.change(on_run_change, [run_dd], [card_md])
-    infer_btn.click(on_infer, [run_dd, files], [count_md, result_gallery, result_html, res_state])
+    pick_btn.click(on_pick, None, [picked, count_md, result_gallery, res_state])
+    infer_btn.click(on_infer, [run_dd, picked], [count_md, result_gallery, result_html, res_state])
     result_gallery.select(on_select, [res_state], [preview_img, preview_meta])
 
     # 回傳供「訓練」分頁『用此模型推論』跨頁帶入專案/run

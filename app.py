@@ -816,6 +816,10 @@ footer{display:none!important;}
 .ls-dt th:nth-child(4),.ls-dt td:nth-child(4){width:13%;}
 .ls-dt td{padding:3px 10px; border-bottom:1px solid var(--line); color:var(--ink); white-space:nowrap;}
 .ls-dt td.ls-name{overflow:hidden; text-overflow:ellipsis; font-family:'IBM Plex Mono',monospace; font-size:12px;}
+.ls-dt.det th:nth-child(2),.ls-dt.det td:nth-child(2){width:14%;}   /* 偵測表:框數窄、偵測項寬 */
+.ls-dt.det th:nth-child(3),.ls-dt.det td:nth-child(3){width:38%;}
+.infer-top{color:var(--navy-500); font-size:12px; white-space:normal;}  /* Top-3 / 偵測項:柔色、可換行 */
+.infer-bad{color:#C0392B; font-weight:600;}
 .ls-row{cursor:pointer;}
 .ls-row:hover{background:var(--navy-100);}
 .ls-row.ls-sel-row{background:var(--lemon-soft)!important; box-shadow:inset 3px 0 0 var(--lemon);}
