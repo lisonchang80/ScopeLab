@@ -16,6 +16,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from urllib.parse import quote as _quote
 
 import gradio as gr
 
@@ -710,6 +711,11 @@ footer{display:none!important;}
 .brandbar .chip{background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.22);
   padding:4px 12px; border-radius:999px; font-size:12px; font-family:'IBM Plex Mono',monospace;}
 .brandbar .chip.lemon{background:var(--lemon); color:var(--navy-900); border:none; font-weight:600;}
+.brandbar .dlbtn{display:inline-flex; align-items:center; gap:6px; background:var(--lemon);
+  color:var(--navy-900)!important; font-weight:700; font-size:13px; text-decoration:none;
+  padding:6px 14px; border-radius:999px; box-shadow:0 2px 8px rgba(0,0,0,.20);
+  transition:transform .08s ease, box-shadow .08s ease;}
+.brandbar .dlbtn:hover{transform:translateY(-1px); box-shadow:0 5px 14px rgba(0,0,0,.30);}
 
 /* 三大視窗面板（class 用 ls-panel：Gradio 會吃掉保留字 panel） */
 .ls-panel{background:var(--surface)!important; border:2px solid var(--navy-500)!important;
@@ -910,11 +916,19 @@ def panel_head(tag, en, sub):
             f'<span class="ph-en">{en}</span></div><span class="ph-sub">{sub}</span></div>')
 
 
+# 「下載桌面版」按鈕：只有公開站（packaging/dist 下存在安裝檔）才顯示；桌面版自身不顯示。
+_SETUP_EXE = Path(__file__).resolve().parent / "packaging" / "dist" / "ScopeLab-Setup.exe"
+SETUP_DL_URL = ("/gradio_api/file=" + _quote(_SETUP_EXE.as_posix())) if _SETUP_EXE.exists() else None
+_DL_BTN = (
+    f'<a class="dlbtn" href="{SETUP_DL_URL}" download="ScopeLab-Setup.exe" '
+    f'title="下載 Windows 桌面安裝版（離線標記／訓練／推論；裝到自己機器上用自家 GPU 與資料夾）">'
+    f'⬇ 下載桌面版</a>') if SETUP_DL_URL else ''
+
 BRAND_HTML = (
     '<div class="brandbar"><div class="brand"><span class="logo">🏷️</span>'
     '<span class="btext"><span class="bt">ScopeLab</span>'
     '<span class="bsub">影像辨識標記工作台</span></span></div>'
-    '<div class="bmeta"><span class="chip">分類 · 偵測</span>'
+    f'<div class="bmeta">{_DL_BTN}<span class="chip">分類 · 偵測</span>'
     '<span class="chip lemon">建立訓練資料集</span></div></div>')
 
 FOOTER_HTML = ('<div class="foot">影像標記 → 匯出 ImageFolder / YOLO / COCO，'
@@ -1454,6 +1468,10 @@ def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **o
         allowed = [p.strip() for p in env_paths.split(";") if p.strip() and Path(p.strip()).exists()]
     else:
         allowed = [f"{d}:\\" for d in "CDEFGHIJKLMNOPQRSTUVWXYZ" if Path(f"{d}:\\").exists()]
+    # 確保「下載桌面版」按鈕能透過 /gradio_api/file= 取得安裝檔（不論 allowed env 怎麼設）
+    _dist = str(Path(__file__).resolve().parent / "packaging" / "dist")
+    if Path(_dist).exists() and _dist not in allowed:
+        allowed.append(_dist)
     _u, _p = os.environ.get("SCOPELAB_AUTH_USER"), os.environ.get("SCOPELAB_AUTH_PASS")
     auth = (_u, _p) if (_u and _p) else None
     print(f"[ScopeLab] {len(store.list_projects())} projects | allowed_paths={allowed} | auth={'on' if auth else 'off'}")
