@@ -106,7 +106,7 @@ _EMPTY = ('<div class="ls-empty-state"><div class="es-ic">🔍</div>'
           '<b>📁 選擇資料夾</b> 載入影像，再按 <b>▶ 批次推論</b>。</div></div>')
 
 
-def _cls_table(res):
+def _cls_table(res, thr=0.0):
     head = "<tr><th>影像</th><th>預測</th><th>信心</th><th>Top-3</th></tr>"
     rows = []
     for i, r in enumerate(res):
@@ -116,9 +116,11 @@ def _cls_table(res):
                         f'<td colspan="3" class="infer-bad">讀取失敗</td></tr>')
             continue
         pred, conf = r["top"][0]
+        pred_html = ('<b class="infer-bad">Null（待確認）</b>' if conf < thr   # 低於門檻 → 歸 Null
+                     else f'<b>{html.escape(pred)}</b>')
         t3 = "　".join(f"{html.escape(c)} {p * 100:.0f}%" for c, p in r["top"])
         rows.append(f'<tr class="ls-row" data-i="{i}"><td class="ls-name" title="{name}">{name}</td>'
-                    f'<td><b>{html.escape(pred)}</b></td><td>{conf * 100:.1f}%</td>'
+                    f'<td>{pred_html}</td><td>{conf * 100:.1f}%</td>'
                     f'<td class="infer-top">{t3}</td></tr>')
     return (f'<div class="ls-dt-wrap"><table class="ls-dt"><thead>{head}</thead>'
             f'<tbody>{"".join(rows)}</tbody></table></div>')
@@ -140,10 +142,11 @@ def _det_table(res):
             f'<tbody>{"".join(rows)}</tbody></table></div>')
 
 
-def _cls_meta(r):
+def _cls_meta(r, thr=0.0):
     if not r.get("ok"):
         return "讀取失敗"
-    return "　".join(f"**{html.escape(c)}** {p * 100:.0f}%" for c, p in r["top"])
+    prefix = "**Null（待確認）** ← " if r["top"][0][1] < thr else ""
+    return prefix + "　".join(f"**{html.escape(c)}** {p * 100:.0f}%" for c, p in r["top"])
 
 
 def _det_meta(r):
@@ -165,6 +168,8 @@ def build_infer_tab():
                 run_dd = gr.Dropdown([], label="訓練結果（run）", filterable=False, scale=4)
                 refresh_btn = gr.Button("🔄", elem_classes="tbtn", scale=0, min_width=46)
             card_md = gr.Markdown("", elem_classes="infobar")
+            thr = gr.Slider(0.0, 1.0, value=0.5, step=0.01, label="信心門檻（分類）",
+                            info="Top-1 機率低於此值 → 歸入 Null 待確認", elem_classes="thr")
         with gr.Column(scale=6, elem_classes="ls-panel"):
             gr.HTML(_phead("顯示", "DISPLAY", "點下方結果縮圖即在此預覽"))
             preview_img = gr.Image(show_label=False, height=520, elem_classes="preview")
@@ -172,7 +177,7 @@ def build_infer_tab():
 
     with gr.Row(elem_classes="editrow"):
         with gr.Column(elem_classes="ls-panel"):
-            gr.HTML(_phead("結果", "RESULT", "選資料夾 → 批次推論 → 逐張結果"))
+            gr.HTML(_phead("✎ 編輯", "EDIT", "選資料夾 → 批次推論 → 逐張結果"))
             with gr.Row(elem_classes="toolbar"):
                 pick_btn = gr.Button("📁 選擇資料夾", elem_classes="tbtn", scale=0)
                 infer_btn = gr.Button("▶ 批次推論", elem_classes="tbtn primary", scale=0)
@@ -209,7 +214,7 @@ def build_infer_tab():
         return (files, gr.update(value=head, visible=True),
                 gr.update(value=gallery), items)
 
-    def on_infer(weights, plist, progress=gr.Progress()):
+    def on_infer(weights, plist, thr, progress=gr.Progress()):
         if not weights:
             raise gr.Error("請先選一個訓練結果（run）；若沒有，先到「訓練」分頁訓一個。")
         if not plist:
@@ -234,10 +239,11 @@ def build_infer_tab():
             res = predictor.predict(model, classes, img, plist, dstr)
             progress(1.0, desc="完成")
             gallery = [(r["path"], Path(r["path"]).name) for r in res]
-            items = [{"img": r["path"], "meta": _cls_meta(r)} for r in res]
+            items = [{"img": r["path"], "meta": _cls_meta(r, thr)} for r in res]
             ok = sum(1 for r in res if r.get("ok"))
-            head = f"✅ 推論完成：{ok}/{len(res)} 張"
-            table = _cls_table(res)
+            low = sum(1 for r in res if r.get("ok") and r["top"][0][1] < thr)
+            head = f"✅ 推論完成：{ok}/{len(res)} 張" + (f" · {low} 張低於門檻歸 Null" if low else "")
+            table = _cls_table(res, thr)
         return (gr.update(value=head, visible=True), gr.update(value=gallery), table, items)
 
     def on_select(items, evt: gr.SelectData):
@@ -251,7 +257,7 @@ def build_infer_tab():
     proj_dd.change(on_proj_change, [proj_dd], [run_dd, card_md])
     run_dd.change(on_run_change, [run_dd], [card_md])
     pick_btn.click(on_pick, None, [picked, count_md, result_gallery, res_state])
-    infer_btn.click(on_infer, [run_dd, picked], [count_md, result_gallery, result_html, res_state])
+    infer_btn.click(on_infer, [run_dd, picked, thr], [count_md, result_gallery, result_html, res_state])
     result_gallery.select(on_select, [res_state], [preview_img, preview_meta])
 
     # 回傳供「訓練」分頁『用此模型推論』跨頁帶入專案/run

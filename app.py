@@ -710,9 +710,11 @@ footer{display:none!important;}
 .brandbar .brand{display:flex; align-items:center; gap:14px;}
 .brandbar .logo{color:var(--lemon); font-size:28px;}
 .brandbar .btext{display:inline-flex; flex-direction:column; align-items:stretch;}
-.brandbar .bt{font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:34px; letter-spacing:3px;
+.brandbar .bt{font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:36px; letter-spacing:3px;
   color:var(--lemon)!important; text-shadow:0 1px 3px rgba(0,0,0,.30); line-height:1.05;}
-.brandbar .bsub{color:#E3EEFB; font-size:14px; letter-spacing:.5px; margin-top:2px;}
+/* 中文副標兩端對齊撐到與英文標題同寬（btext flex 欄 align-items:stretch + bsub 被 blockify→justify 生效）*/
+.brandbar .bsub{color:#E3EEFB; font-size:15px; letter-spacing:0;
+  text-align:justify; text-align-last:justify; margin-top:2px;}
 .brandbar .chip{background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.22);
   padding:4px 12px; border-radius:999px; font-size:12px; font-family:'IBM Plex Mono',monospace;}
 .brandbar .chip.lemon{background:var(--lemon); color:var(--navy-900); border:none; font-weight:600;}
