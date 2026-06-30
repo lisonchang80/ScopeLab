@@ -11,6 +11,7 @@ for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":7861" ^| findstr LISTENING'
 timeout /t 1 /nobreak >nul
 echo Starting fresh ScopeLab server ...
 set SCOPELAB_PORT=7861
+set SCOPELAB_PUBLIC=1
 set PYTHONIOENCODING=utf-8
 set "SCOPELAB_ALLOWED_PATHS=D:\Claude code\ScopeLab"
 start "ScopeLab Server" "D:\Claude code\ClinScope\.venv\Scripts\python.exe" -u "D:\Claude code\ScopeLab\app.py"

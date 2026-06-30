@@ -26,6 +26,11 @@ DATA_ROOT = Path(_DATA) if _DATA else ROOT
 PROJECTS = DATA_ROOT / "projects"
 PROJECTS.mkdir(parents=True, exist_ok=True)
 
+# 公開展示模式：公開站設 SCOPELAB_PUBLIC=1 → 關掉「訓練執行」與「伺服器端選資料夾」，
+# 只剩瀏覽範例 / 看 UI / 下載桌面版（避免遠端訪客用到本機 GPU/硬碟）。桌面版/開發不設 → 全功能。
+PUBLIC = os.environ.get("SCOPELAB_PUBLIC", "").strip().lower() in ("1", "true", "yes")
+PUBLIC_MSG = "公開展示模式：選資料夾與訓練請下載「桌面版」在自己電腦使用（本站僅供瀏覽範例與下載）。"
+
 IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp", ".gif"}
 TASKS = {"cls": "分類", "det": "偵測"}
 

@@ -8,6 +8,7 @@ REM  is started by clinscope_public.vbs. If the public URL is
 REM  down, run restart_tunnel.bat once.
 REM ============================================================
 set SCOPELAB_PORT=7861
+set SCOPELAB_PUBLIC=1
 set PYTHONIOENCODING=utf-8
 REM 收緊檔案曝險：公開站只服務 ScopeLab 專案資料夾（不曝整個 D:\ / C:\Users）
 set "SCOPELAB_ALLOWED_PATHS=D:\Claude code\ScopeLab"

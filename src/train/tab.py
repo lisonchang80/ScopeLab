@@ -75,6 +75,8 @@ def build_train_tab():
         return f"<div class='infobar'>{device.device_summary(d)}</div>"
 
     def on_train(slug, recipe_key, progress=gr.Progress()):
+        if store.PUBLIC:
+            raise gr.Error(store.PUBLIC_MSG)
         if not slug:
             raise gr.Error("請先選一個專案。")
         from . import device

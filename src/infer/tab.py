@@ -24,6 +24,8 @@ def _phead(tag, en, sub):     # 比照 app.panel_head（避免 infer→app 循�
 
 
 def _pick_dir():              # 原生資料夾選取器（同 app._native_dir，避免循環 import 複製一份）
+    if store.PUBLIC:          # 公開展示模式：不在伺服器端開原生對話框
+        return ""
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -192,6 +194,9 @@ def build_infer_tab():
         return gr.update(choices=_all_projects()), gr.update(choices=_runs(slug))
 
     def on_pick():
+        if store.PUBLIC:
+            gr.Warning(store.PUBLIC_MSG)
+            return gr.update(), gr.update(), gr.update(), gr.update()
         path = _pick_dir()
         if not path:
             return gr.update(), gr.update(), gr.update(), gr.update()

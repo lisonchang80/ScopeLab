@@ -363,6 +363,9 @@ def on_task_change(task, S):
 #  分類視窗 handler
 # ============================================================================
 def on_pick_folder(S):
+    if store.PUBLIC:
+        gr.Warning(store.PUBLIC_MSG)
+        return (S, *render4(S), *preview_bundle(S), info_text(S))
     path = _native_dir()
     if not path:
         return (S, *render4(S), *preview_bundle(S), info_text(S))
@@ -378,6 +381,8 @@ def on_pick_folder(S):
 
 
 def _native_dir():
+    if store.PUBLIC:                 # 公開展示模式：不在伺服器端開原生對話框
+        return ""
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -923,12 +928,14 @@ _DL_BTN = (
     f'<a class="dlbtn" href="{SETUP_DL_URL}" download="ScopeLab-Setup.exe" '
     f'title="下載 Windows 桌面安裝版（離線標記／訓練／推論；裝到自己機器上用自家 GPU 與資料夾）">'
     f'⬇ 下載桌面版</a>') if SETUP_DL_URL else ''
+_PUBLIC_CHIP = ('<span class="chip" style="background:#C0392B;border:none;color:#fff;">🔒 公開展示模式</span>'
+                if store.PUBLIC else '')
 
 BRAND_HTML = (
     '<div class="brandbar"><div class="brand"><span class="logo">🏷️</span>'
     '<span class="btext"><span class="bt">ScopeLab</span>'
     '<span class="bsub">影像辨識標記工作台</span></span></div>'
-    f'<div class="bmeta">{_DL_BTN}<span class="chip">分類 · 偵測</span>'
+    f'<div class="bmeta">{_DL_BTN}{_PUBLIC_CHIP}<span class="chip">分類 · 偵測</span>'
     '<span class="chip lemon">建立訓練資料集</span></div></div>')
 
 FOOTER_HTML = ('<div class="foot">影像標記 → 匯出 ImageFolder / YOLO / COCO，'
