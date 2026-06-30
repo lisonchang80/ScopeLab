@@ -10,3 +10,8 @@ projects/*/runs/
 
 # 下載的 YOLO 預訓練權重（cwd 快取，留著供離線、別入版）
 *.pt
+
+# 桌面安裝程式建置產物（多 GB，不入版）
+.venv-build/
+packaging/build/
+packaging/dist/

@@ -1,0 +1,24 @@
+# ScopeLab runtime 子集（打包桌面版用）— 標記 + 訓練 + 推論需要的依賴。
+# 對照 ../requirements.txt（前端最小集）；此檔加上訓練/推論的重依賴。
+#
+# 預設 CPU-only torch（最易安裝、不依賴顯卡驅動；訓練較慢但推論順暢，GPU 為可選升級）。
+#   pip install -r packaging/requirements-runtime.txt
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# --- 深度學習 runtime（CPU 版）---
+torch==2.6.0
+torchvision==0.21.0
+
+# --- 前端 ---
+gradio>=6.0
+pywebview>=5.0            # 原生桌面視窗（失敗自動退回瀏覽器）
+
+# --- 影像 / 數值 ---
+numpy
+pillow
+PyYAML
+
+# --- 訓練 / 推論引擎 ---
+ultralytics              # YOLO 偵測（det）
+scikit-learn             # 分類 train/val split + 指標
