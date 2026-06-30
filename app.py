@@ -833,6 +833,7 @@ footer{display:none!important;}
 .ls-dt.det th:nth-child(3),.ls-dt.det td:nth-child(3){width:38%;}
 .infer-top{color:var(--navy-500); font-size:12px; white-space:normal;}  /* Top-3 / 偵測項:柔色、可換行 */
 .infer-bad{color:#C0392B; font-weight:600;}
+.infer-edit{color:#1F6FB2; font-weight:600;}   /* 手動切換分類後的標示 */
 .ls-row{cursor:pointer;}
 .ls-row:hover{background:var(--navy-100);}
 .ls-row.ls-sel-row{background:var(--lemon-soft)!important; box-shadow:inset 3px 0 0 var(--lemon);}
