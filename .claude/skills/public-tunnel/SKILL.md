@@ -41,6 +41,7 @@ Cloudflare Access(Google 登入)擋。**本機是真正在跑的地方,Cloudflar
 - **無 admin → 不能 `cloudflared service install`** → 用 Startup 的 .vbs 登入自啟(detached、隱藏)。
 - **換網路必斷**:WiFi 切換/睡眠喚醒後 cloudflared 卡舊連線 → 502。重啟共用 tunnel 即解。
 - **Access 只綁單一主機名**:`scopelab` app 只保護 `scopelab.tinghaochang.com`。
+- **新版 Zero Trust UI 建 Access app**(2026-07 實測):Add an application → **Self-hosted and private** → 子分頁選 **Public DNS**(⚠️ 不是預設的 *Private destinations*——那是 WARP 私網、方向錯)→ Continue。設定頁要填三塊才能按 Create:**Destinations**(Public hostname:Subdomain=`scopelab` / Domain=`tinghaochang.com` / Path 空)、**Identity providers**(勾現有 Google、Accept-all 關)、**Access policies**(Policy Name **必填**否則紅字 "required" 擋住、Action=Allow、Include=Everyone)。上方 Preview 三格(SOURCES/POLICIES/DESTINATIONS)是即時摘要,DESTINATIONS 與 POLICIES 不能是空的。建好後回 Applications 清單會與 clinscope 並排(gis 走 in-app OAuth、不在此清單)。
 - **detached vs 背景任務**:run_in_background 起的 server 會隨 session 結束被砍;要常駐請走 `.vbs`(wscript)。
 - **ScopeLab 不像 ClinScope 有雲端權重**:沒有 weights manifest / HF 下載這層,公開站直接跑 repo;故無「選模型才下載」橫幅。
 - **公開站的「選資料夾」原生對話框開在伺服器端、訓練吃本機 GPU** → 遠端訪客只能看 UI/範例,真正能用的是下載安裝版。
