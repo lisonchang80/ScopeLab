@@ -50,8 +50,8 @@ type _smoke.json                              # {"projects":..,"data_dir":..,"ha
 
 ### 架構
 - 網域 `tinghaochang.com`（Cloudflare Registrar）。
-- **共用** tunnel `clinscope`（UUID `e90e134d-5254-4976-8c7e-7e85a21ece98`）：**一個** cloudflared
-  程序同時服務 clinscope(7860) + scopelab(7861) + gis(8000)，ingress 見 `~/.cloudflared/config.yml`。
+- **共用** tunnel `tinghaochang-sites`（原名 `clinscope`，2026-07-04 改名；UUID `e90e134d-5254-4976-8c7e-7e85a21ece98`，腳本一律用 UUID 跑）：**一個** cloudflared
+  程序同時服務 clinscope(7860) + scopelab(7861) + gis(8000) + harnesshub(5178) + 根網域(5180)，ingress 見 `~/.cloudflared/config.yml`。
 - Access app `scopelab` 綁單一主機名 `scopelab.tinghaochang.com`，policy = 任何 Google 帳號
   （沿用 ClinScope 的 Google IdP）。
 - 公開站跑 **dev venv 的 `python app.py`**（埠 7861），權重走本機 repo。
@@ -60,7 +60,7 @@ type _smoke.json                              # {"projects":..,"data_dir":..,"ha
 ```powershell
 # 1) config.yml ingress：scopelab.tinghaochang.com -> http://localhost:7861（已加）
 # 2) DNS CNAME
-cloudflared tunnel route dns clinscope scopelab.tinghaochang.com
+cloudflared tunnel route dns tinghaochang-sites scopelab.tinghaochang.com
 # 3) Startup 自啟：packaging\autostart\scopelab_public.vbs 複製到
 #    %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\（只起 7861 server；tunnel 由 clinscope_public.vbs 起）
 # 4) Cloudflare Access：Zero Trust 後台新建 self-hosted app `scopelab`

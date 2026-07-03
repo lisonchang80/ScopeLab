@@ -1,6 +1,6 @@
 ---
 name: public-tunnel
-description: 維護/部署 ScopeLab 公開網址 scopelab.tinghaochang.com(Cloudflare Tunnel + Access)。觸發詞:公開站連不上、502 Bad gateway、Host Error、錯誤 1033、重啟 tunnel、開/關公開站、改誰能登入、Access policy、IdP/Google 登入、換網路後斷線、開機自啟。⚠️ tunnel 與 ClinScope 共用(同一個 clinscope tunnel 服務 clinscope+scopelab+gis)。涉及 ~/.cloudflared/config.yml、packaging/autostart/(start_public/restart_server/restart_tunnel.bat、scopelab_public.vbs)、app.py launch_app() 的 SCOPELAB_AUTH_USER/PASS + SCOPELAB_ALLOWED_PATHS、Cloudflare Zero Trust(one.dash.cloudflare.com)。完整背景見 docs/DEPLOY.md Track A。
+description: 維護/部署 ScopeLab 公開網址 scopelab.tinghaochang.com(Cloudflare Tunnel + Access)。觸發詞:公開站連不上、502 Bad gateway、Host Error、錯誤 1033、重啟 tunnel、開/關公開站、改誰能登入、Access policy、IdP/Google 登入、換網路後斷線、開機自啟。⚠️ tunnel 與 ClinScope 共用(同一條 tinghaochang-sites tunnel——原名 clinscope、2026-07-04 改名——服務 clinscope+scopelab+gis+harnesshub+根網域)。涉及 ~/.cloudflared/config.yml、packaging/autostart/(start_public/restart_server/restart_tunnel.bat、scopelab_public.vbs)、app.py launch_app() 的 SCOPELAB_AUTH_USER/PASS + SCOPELAB_ALLOWED_PATHS、Cloudflare Zero Trust(one.dash.cloudflare.com)。完整背景見 docs/DEPLOY.md Track A。
 ---
 
 # Public Tunnel — ScopeLab 公開站維運
@@ -11,9 +11,9 @@ Cloudflare Access(Google 登入)擋。**本機是真正在跑的地方,Cloudflar
 
 ## 現況關鍵值
 - 網域 `tinghaochang.com`(Cloudflare Registrar)。
-- **⚠️ tunnel 與 ClinScope 共用**:tunnel 名 `clinscope`、UUID `e90e134d-5254-4976-8c7e-7e85a21ece98`。
-  **一個** cloudflared 程序同時服務 clinscope(7860) + scopelab(7861) + gis(8000)。
-  重啟 tunnel = 同時影響三個站。
+- **⚠️ tunnel 與 ClinScope 共用**:tunnel 名 `tinghaochang-sites`(原名 `clinscope`,2026-07-04 改名;腳本一律用 UUID 跑)、UUID `e90e134d-5254-4976-8c7e-7e85a21ece98`。
+  **一個** cloudflared 程序同時服務 clinscope(7860) + scopelab(7861) + gis(8000) + harnesshub(5178) + 根網域 portfolio(5180)。
+  重啟 tunnel = 同時影響五個站。
 - Access app `scopelab`,destination=`scopelab.tinghaochang.com`(**單一主機名**),policy `任何登入者`=Everyone,
   登入=**Google OAuth IdP**(沿用 ClinScope 那個,任何 Google 真人可進、擋 bot)。
 - 公開站跑 **dev venv 的 `python app.py`**(埠 7861)。
@@ -35,8 +35,8 @@ Cloudflare Access(Google 登入)擋。**本機是真正在跑的地方,Cloudflar
 | **收緊檔案曝險** | 自啟/啟動環境設 `SCOPELAB_ALLOWED_PATHS=D:\Claude code\ScopeLab`(只服務專案夾、不曝 C:\Users;autostart 已設);亦可 `SCOPELAB_AUTH_USER/PASS` 加 Gradio 密碼(Access 已是更強的邊緣驗證) |
 
 ## 坑(都實際踩過)
-- **tunnel 是共用的**:scopelab 沒有自己的 tunnel,掛在 ClinScope 的 `clinscope` 上(config.yml 多一條 ingress)。
-  好處是一個程序顧三站;代價是**重啟 tunnel 會同時斷 clinscope/gis 約 10 秒**。改 config.yml 後現有 tunnel
+- **tunnel 是共用的**:scopelab 沒有自己的 tunnel,掛在共用的 `tinghaochang-sites`(原名 clinscope)上(config.yml 多一條 ingress)。
+  好處是一個程序顧全部站;代價是**重啟 tunnel 會同時斷其他站約 10 秒**。改 config.yml 後現有 tunnel
   不會自動 reload,要 `restart_tunnel.bat` 重啟才套用新 ingress。
 - **無 admin → 不能 `cloudflared service install`** → 用 Startup 的 .vbs 登入自啟(detached、隱藏)。
 - **換網路必斷**:WiFi 切換/睡眠喚醒後 cloudflared 卡舊連線 → 502。重啟共用 tunnel 即解。
