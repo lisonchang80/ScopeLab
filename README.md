@@ -7,6 +7,37 @@
 - **分類 cls** — 整張圖一個類別 → 匯出 ImageFolder（類別資料夾）
 - **偵測 det** — 在圖上畫 bounding box → 匯出 YOLO / COCO
 
+## 系統架構
+
+線上版經 Cloudflare Access（Google 登入）連到本機 GPU 主機的 Gradio **三分頁工作台（標記／訓練／推論）**——一條龍把資料標註、模型訓練到推論串起來，產出的權重可直接餵給姊妹平台 ClinScope／MatScope；另有桌面離線安裝版，引擎骨幹內建、免下載即可離線自跑。公開站因跑在站主的 GPU 與硬碟上，以**展示模式 `SCOPELAB_PUBLIC`** 擋掉訓練與伺服器端選資料夾。
+
+```mermaid
+flowchart TB
+    B["瀏覽器<br/>任何 Google 帳號"]
+    D["桌面離線版<br/>ScopeLab-Setup.exe"]
+    OFF["離線自跑<br/>引擎內建・免下載"]
+    subgraph CF["Cloudflare · scopelab.tinghaochang.com"]
+        A["Access（Google 登入）"]
+    end
+    subgraph HOST["本機 GPU 主機 · 登入自啟"]
+        G["Gradio 三分頁工作台 :7861"]
+        DEMO["展示模式 SCOPELAB_PUBLIC<br/>擋訓練／伺服器端選夾"]
+        L["標記<br/>全螢幕 canvas 標註"]
+        T["訓練<br/>ResNet／YOLO"]
+        W["模型權重<br/>best checkpoint"]
+        I["推論<br/>三視窗批次"]
+    end
+    SIS["姊妹平台<br/>ClinScope／MatScope"]
+    B --> A --> G
+    D --> OFF
+    G --> L --> T --> W --> I
+    W --> SIS
+```
+
+- **使用者端**：線上瀏覽器（任何 Google 帳號）、桌面離線安裝版
+- **外部服務**：Cloudflare（scopelab 子網域轉送＋Access 登入關卡）
+- **本機服務**：Gradio 三分頁工作台、標記→訓練→權重→推論管線、展示模式閘門；權重可接姊妹平台
+
 ## 三視窗
 
 | 視窗 | 位置 | 功能 |
