@@ -9,19 +9,20 @@
 
 ## 系統架構
 
-線上版經 Cloudflare Access（Google 登入）連到本機 GPU 主機的 Gradio **三分頁工作台（標記／訓練／推論）**——一條龍把資料標註、模型訓練到推論串起來，產出的權重可直接餵給姊妹平台 ClinScope／MatScope；另有桌面離線安裝版，引擎骨幹內建、免下載即可離線自跑。公開站因跑在站主的 GPU 與硬碟上，以**展示模式 `SCOPELAB_PUBLIC`** 擋掉訓練與伺服器端選資料夾。
+線上版經 Cloudflare（`scopelab.tinghaochang.com`，Access 已改 **Bypass**、匿名即可瀏覽）連到本機 GPU 主機的 Gradio **三分頁工作台（標記／訓練／推論）**——一條龍把資料標註、模型訓練到推論串起來，產出的權重可直接餵給姊妹平台 ClinScope／MatScope；另有桌面離線安裝版，引擎骨幹內建、免下載即可離線自跑。公開站跑在站主的 GPU 與硬碟上，所以**匿名訪客唯讀**（選資料夾／訓練／推論按鈕虛化停用）；站主用**站內 Google 登入**（信箱須為 `OWNER_EMAIL`）後自動開「本地模式」，才能用本機 GPU／資料夾完整操作，後端另有 `guard_owner` 縱深把關（不只靠前端虛化）。
 
 ```mermaid
 flowchart TB
-    B["瀏覽器<br/>任何 Google 帳號"]
+    B["瀏覽器<br/>匿名唯讀・站主可管理"]
     D["桌面離線版<br/>ScopeLab-Setup.exe"]
     OFF["離線自跑<br/>引擎內建・免下載"]
     subgraph CF["Cloudflare · scopelab.tinghaochang.com"]
-        A["Access（Google 登入）"]
+        A["Access：Bypass（公開匿名可看）"]
     end
     subgraph HOST["本機 GPU 主機 · 登入自啟"]
         G["Gradio 三分頁工作台 :7861"]
-        DEMO["展示模式 SCOPELAB_PUBLIC<br/>擋訓練／伺服器端選夾"]
+        GL["站內 Google 登入<br/>站主 = OWNER_EMAIL"]
+        OWN["站主控管 guard_owner<br/>訓練・選夾・本地模式（訪客虛化）"]
         L["標記<br/>全螢幕 canvas 標註"]
         T["訓練<br/>ResNet／YOLO"]
         W["模型權重<br/>best checkpoint"]
@@ -31,12 +32,14 @@ flowchart TB
     B --> A --> G
     D --> OFF
     G --> L --> T --> W --> I
+    G --> OWN
+    GL -. 站主登入 .-> OWN
     W --> SIS
 ```
 
-- **使用者端**：線上瀏覽器（任何 Google 帳號）、桌面離線安裝版
-- **外部服務**：Cloudflare（scopelab 子網域轉送＋Access 登入關卡）
-- **本機服務**：Gradio 三分頁工作台、標記→訓練→權重→推論管線、展示模式閘門；權重可接姊妹平台
+- **使用者端**：線上瀏覽器（匿名唯讀、站主 Google 登入後可完整操作）、桌面離線安裝版
+- **外部服務**：Cloudflare（scopelab 子網域轉送；Access 已改 Bypass 公開，權限改由站內 Google 登入判定）
+- **本機服務**：Gradio 三分頁工作台、標記→訓練→權重→推論管線、站主控管閘門（站內 Google 登入 + `guard_owner`，訪客唯讀）；權重可接姊妹平台
 
 ## 三視窗
 
