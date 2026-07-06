@@ -26,6 +26,11 @@ for ($i=0;$i -lt 25;$i++){ $c=Get-NetTCPConnection -State Listen -LocalPort 7861
 
 改碼後重啟＝同一段（先 Stop-Process 該埠的 PID 再重起）。PowerShell 字串裡別用 `$var:`（會被當磁碟機），用 `${var}`。
 
+⚠️ **程序污染坑（2026-07-07 花很久才查出）**：
+- 埠 7861 可能被一支**系統 Python**（`…\Python311\python.exe`，**沒裝 gradio**）佔住，跑的是舊/錯函式庫 → HTTP 行為怪（例如 /auth 回 422 而非預期）。**kill 要涵蓋兩種直譯器**：用 cmdline glob `*ScopeLab\app.py*` 撈（同時抓 venv + 系統 python），或殺該埠 PID。確認啟動的是 **venv** 那支（`…\ClinScope\.venv\…`）。
+- 啟動後 process 列會出現一支 **`Python311` 子進程（ppid=venv）**：它 import gradio 即崩，但 Windows 把「繼承來的 listening socket」歸給它、netstat 顯示成 7861 owner——**這是無害的 socket-handle 繼承殘影，不是 bug**（ClinScope 生產環境也有一模一樣的、運作正常）。別追殺、也別被 netstat 的 owner pid 誤導；真正在服務的是 venv parent。
+- 公開站帶祕密啟動：`Start-Process` 的路徑引數要引號 `'-u','"D:\Claude code\ScopeLab\app.py"'`；驗證 `/auth/google` dummy 應回 401。站主模式細節見 owner-mode skill。
+
 ## 2. 驗證改動（preview + DOM，**不要靠截圖/動態點擊**）
 
 這台的 preview 瀏覽器對 ScopeLab 有幾個雷，靠它們驗證要繞開：
