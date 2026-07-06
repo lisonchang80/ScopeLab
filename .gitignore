@@ -15,3 +15,7 @@ projects/*/runs/
 .venv-build/
 packaging/build/
 packaging/dist/
+
+# 公開站祕密與身分紀錄（絕不入版）
+packaging/autostart/env.local.bat
+identity_debug.log
