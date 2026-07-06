@@ -74,9 +74,10 @@ def build_train_tab():
         d = device.pick_device()
         return f"<div class='infobar'>{device.device_summary(d)}</div>"
 
-    def on_train(slug, recipe_key, progress=gr.Progress()):
-        if store.PUBLIC:
-            raise gr.Error(store.PUBLIC_MSG)
+    def on_train(slug, recipe_key, request: gr.Request = None, progress=gr.Progress()):
+        from .. import auth
+        if auth.public_locked(request):
+            raise gr.Error(auth.locked_msg(request))
         if not slug:
             raise gr.Error("請先選一個專案。")
         from . import device
@@ -175,5 +176,5 @@ def build_train_tab():
                     [train_btn, infer_jump_btn, last_run,
                      device_html, check_html, eplog_html, result_html])
     # 回傳供 app 跨頁接線：標記頁『開始訓練』帶入(proj_dd/recipe_radio)、
-    # 訓練完『用此模型推論』帶出(infer_jump_btn/last_run)
-    return proj_dd, recipe_radio, infer_jump_btn, last_run
+    # 訓練完『用此模型推論』帶出(infer_jump_btn/last_run)；train_btn 供公開站訪客虛化
+    return proj_dd, recipe_radio, infer_jump_btn, last_run, train_btn

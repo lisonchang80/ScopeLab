@@ -21,7 +21,7 @@ from urllib.parse import quote as _quote
 import gradio as gr
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from src import store, imaging, exporter, train, infer
+from src import store, imaging, exporter, train, infer, auth
 from src.store import TOTAL, NULL, DONE, TODO, ADDCLASS, TASKS
 
 # 工具列『指派分類』下拉未選圖時顯示的提示（並虛化）；比照 ClinScope「⇄ 切換分類」
@@ -362,9 +362,9 @@ def on_task_change(task, S):
 # ============================================================================
 #  分類視窗 handler
 # ============================================================================
-def on_pick_folder(S):
-    if store.PUBLIC:
-        gr.Warning(store.PUBLIC_MSG)
+def on_pick_folder(S, request: gr.Request = None):
+    if auth.public_locked(request):
+        gr.Warning(auth.locked_msg(request))
         return (S, *render4(S), *preview_bundle(S), info_text(S))
     path = _native_dir()
     if not path:
@@ -381,8 +381,8 @@ def on_pick_folder(S):
 
 
 def _native_dir():
-    if store.PUBLIC:                 # 公開展示模式：不在伺服器端開原生對話框
-        return ""
+    # 是否允許開原生對話框由呼叫端（on_pick_folder → auth.public_locked）把關；
+    # 站主開「本地模式」時走到這裡，就在站主本機彈出選夾。
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -626,7 +626,8 @@ def on_del_open(S):
     return (gr.update(visible=True), gr.update(choices=choices, value=None))
 
 
-def on_del_confirm(del_slug, S):
+def on_del_confirm(del_slug, S, request: gr.Request = None):
+    auth.guard_owner(request)      # 縱深防禦：刪除為破壞性操作，訪客一律擋（UI 也已虛化）
     if not del_slug:
         raise gr.Error("請先選擇要刪除的專案。")
     name = next((c["name"] for c in store.list_projects() if c["slug"] == del_slug), del_slug)
@@ -849,6 +850,22 @@ footer{display:none!important;}
 .ls-empty-state .es-s{font-size:13.5px; color:var(--muted); max-width:460px; line-height:1.6;}
 .ls-empty-state .es-s b{color:var(--navy-700);}
 #ls-bridge, #ls-trigger, #ls-data, #ls-postedit{display:none!important;}
+
+/* 公開站身分列 + 站主「本地模式」開關 */
+#sl-identity{margin:2px 0 0;}
+#sl-identity:empty{display:none;}
+.sl-idbar{font-size:12.5px;font-weight:600;padding:5px 12px;border-radius:8px;
+  display:inline-block;border:1px solid var(--line);}
+.sl-idbar.sl-owner{background:#E7F6EC;color:#1B7A3D;border-color:#B7E3C6;}
+.sl-idbar.sl-guest{background:var(--lemon-soft,#FBF3CF);color:#7A5B00;border-color:#F0DC8A;}
+.sl-authbtn{margin-left:10px;padding:2px 12px;border-radius:7px;border:1px solid currentColor;
+  background:transparent;color:inherit;font-weight:700;font-size:12px;cursor:pointer;vertical-align:middle;}
+.sl-authbtn:hover{background:rgba(0,0,0,.06);}
+.sl-gbtn{display:inline-block;vertical-align:middle;margin-left:4px;}
+.sl-localchk{flex:0 0 auto!important;margin:4px 0 0!important;padding:0!important;
+  background:transparent!important;border:none!important;box-shadow:none!important;min-width:0!important;}
+.sl-localchk label{gap:6px!important;font-size:12.5px!important;font-weight:700!important;
+  color:var(--navy-700)!important;white-space:nowrap;}
 
 /* 匯出對話框 */
 .ls-modal-backdrop{position:fixed!important; inset:0!important; z-index:9999!important;
@@ -1318,6 +1335,10 @@ def build():
     # theme / css 在 Gradio 6 改由 launch() 傳入（見 launch_app）
     with gr.Blocks(title="ScopeLab — 影像辨識標記工作台") as demo:
         gr.HTML(BRAND_HTML, elem_classes="brandwrap")
+        # 公開站身分列（由 auth.identity_bar 於載入時填）+ 站主專屬「本地模式」開關（預設隱藏）。
+        identity_html = gr.HTML("", elem_id="sl-identity")
+        local_chk = gr.Checkbox(False, label="🔓 本地模式（用本機 GPU / 資料夾）", visible=False,
+                                elem_id="sl-local", elem_classes="sl-localchk", container=False)
 
         projs = project_choices()
         init_slug = projs[0][1] if projs else ""
@@ -1421,9 +1442,11 @@ def build():
 
             with gr.Tab("🏋 訓練", id="train"):
                 (train_proj_dd, train_recipe_radio,
-                 train_infer_btn, train_last_run) = train.build_train_tab()
+                 train_infer_btn, train_last_run, train_btn_ref) = train.build_train_tab()
             with gr.Tab("🔍 推論", id="infer"):
-                infer_proj_dd, infer_run_dd = infer.build_infer_tab()
+                (infer_proj_dd, infer_run_dd,
+                 infer_pick_btn, infer_batch_btn, infer_single_btn,
+                 infer_save_btn, infer_csv_btn) = infer.build_infer_tab()
         gr.HTML(FOOTER_HTML)
 
         # ---- 輸出組 ----
@@ -1469,6 +1492,35 @@ def build():
         # 初始渲染：讓 gallery / detail 都先掛載，再依檢視模式收起其一
         demo.load(lambda s: render4(s), [S], R4)
         demo.load(None, None, None, js=INIT_JS)
+        if store.PUBLIC:
+            # 訪客把「本機操作」按鈕虛化停用（唯讀）：選資料夾 / 存檔 / 新增 / 刪除 / 匯出 / 訓練 / 推論。
+            # 站主一登入即自動開本地模式 → 這些鈕可用；取消勾選 = 預覽訪客（再度虛化+後端擋）。
+            # 後端 auth.public_locked / guard_owner 為權威把關，這裡是 UI 提示（虛化勝過隱藏）。
+            OWNER_BTNS = [folder_btn, save_card_btn, new_btn, del_btn, export_btn, start_train_btn,
+                          train_btn_ref, infer_pick_btn, infer_batch_btn, infer_single_btn,
+                          infer_save_btn, infer_csv_btn]
+
+            def _gate_btns(request: gr.Request):
+                # 載入時：站主 → 鈕可用（identity_bar 已自動開本地模式）；訪客 → 虛化。
+                return auth.owner_button_gate(len(OWNER_BTNS), request)
+
+            def _toggle_local(on, request: gr.Request):
+                # 站主勾/取消「本地模式」：勾=可完整操作；取消=預覽訪客唯讀（鈕虛化+後端擋）。
+                owner = auth.is_owner(request)
+                active = bool(on) and owner
+                auth.set_local_mode(active)
+                # 只在「進入預覽（關閉）」時提示；開啟時 checkbox 勾起本身即自明，避免每次載入都跳 toast。
+                if owner and not active:
+                    gr.Info("👁 預覽訪客唯讀中。勾回「本地模式」即可恢復操作。")
+                en = gr.update(interactive=active)
+                return [en] * len(OWNER_BTNS)
+
+            # 公開站：判定身分 → 身分列 + 站主自動開本地模式（checkbox 勾起可見）。
+            demo.load(auth.identity_bar, None, [identity_html, local_chk])
+            demo.load(_gate_btns, None, OWNER_BTNS)
+            local_chk.change(_toggle_local, local_chk, OWNER_BTNS)
+            if auth.AUTH_ENABLED:
+                demo.load(None, None, None, js=auth.AUTH_JS)   # 站內 Google 登入（登入/登出鈕 + GSI）
     return demo
 
 
@@ -1483,16 +1535,36 @@ def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **o
     if Path(_dist).exists() and _dist not in allowed:
         allowed.append(_dist)
     _u, _p = os.environ.get("SCOPELAB_AUTH_USER"), os.environ.get("SCOPELAB_AUTH_PASS")
-    auth = (_u, _p) if (_u and _p) else None
-    print(f"[ScopeLab] {len(store.list_projects())} projects | allowed_paths={allowed} | auth={'on' if auth else 'off'}")
+    basic_auth = (_u, _p) if (_u and _p) else None
+    port = int(server_port or os.environ.get("SCOPELAB_PORT", 7861) or 7861)
+    print(f"[ScopeLab] {len(store.list_projects())} projects | allowed_paths={allowed} | "
+          f"basic_auth={'on' if basic_auth else 'off'} | "
+          f"mode={'PUBLIC' if store.PUBLIC else 'local'} | "
+          f"google-login={'ON' if auth.AUTH_ENABLED else 'off'}")
+    demo = build()
+    if auth.AUTH_ENABLED:
+        # 站內 Google 登入：掛自訂 /auth/* 路由到 Gradio 底層 FastAPI，再用 uvicorn 起（127.0.0.1，經 tunnel）。
+        import uvicorn
+        from fastapi import FastAPI
+        fastapi_app = FastAPI()
+        auth.add_auth_routes(fastapi_app)
+        mounted = gr.mount_gradio_app(fastapi_app, demo, path="/", allowed_paths=allowed,
+                                      theme=THEME, css=CSS, show_error=True)
+        server = uvicorn.Server(uvicorn.Config(mounted, host="127.0.0.1", port=port, log_level="warning"))
+        if prevent_thread_lock:
+            import threading
+            threading.Thread(target=server.run, daemon=True).start()
+            return mounted
+        server.run()
+        return mounted
     kw = dict(theme=THEME, css=CSS, allowed_paths=allowed,
               prevent_thread_lock=prevent_thread_lock, inbrowser=inbrowser)
-    if auth:
-        kw["auth"] = auth
+    if basic_auth:
+        kw["auth"] = basic_auth
     if server_port:
         kw["server_port"] = server_port
     kw.update(ov)
-    return build().launch(**kw)
+    return demo.launch(**kw)
 
 
 if __name__ == "__main__":

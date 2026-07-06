@@ -25,8 +25,7 @@ def _phead(tag, en, sub):     # 比照 app.panel_head（避免 infer→app 循�
 
 
 def _pick_dir():              # 原生資料夾選取器（同 app._native_dir，避免循環 import 複製一份）
-    if store.PUBLIC:          # 公開展示模式：不在伺服器端開原生對話框
-        return ""
+    # 是否允許由呼叫端（on_pick → auth.public_locked）把關；站主開「本地模式」才走到這。
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -275,7 +274,7 @@ def build_infer_tab():
 
     with gr.Row(elem_classes="editrow"):
         with gr.Column(elem_classes="ls-panel"):
-            gr.HTML(_phead("✎ 編輯", "EDIT", "選資料夾 → 批次計算 → 逐張結果 · 切換分類 / 套用門檻 / 匯出"))
+            gr.HTML(_phead("🔍 推論", "INFER", "選資料夾 → 批次計算 → 逐張結果 · 切換分類 / 套用門檻 / 匯出"))
             with gr.Row(elem_classes="toolbar"):
                 pick_btn = gr.Button("📁 選擇資料夾", elem_classes="tbtn", scale=0)
                 view_dd = gr.Dropdown(["👁 詳細資料", "👁 圖示"], value="👁 詳細資料",
@@ -308,9 +307,10 @@ def build_infer_tab():
     def on_view(v):
         return gr.update(visible=(v == "👁 詳細資料"))
 
-    def on_pick():
-        if store.PUBLIC:
-            gr.Warning(store.PUBLIC_MSG)
+    def on_pick(request: gr.Request = None):
+        from .. import auth
+        if auth.public_locked(request):
+            gr.Warning(auth.locked_msg(request))
             return gr.update(), gr.update(), gr.update(), gr.update()
         path = _pick_dir()
         if not path:
@@ -339,7 +339,11 @@ def build_infer_tab():
             res = predictor.predict(model, classes, img, plist, dstr)
         return {"task": task, "res": res, "classes": list(classes), "ov": {}}
 
-    def on_infer(weights, plist, thr, progress=gr.Progress()):
+    def on_infer(weights, plist, thr, request: gr.Request = None, progress=gr.Progress()):
+        from .. import auth
+        if auth.public_locked(request):     # 批次推論吃本機 GPU：訪客／預覽中一律擋
+            gr.Warning(auth.locked_msg(request))
+            return (gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update())
         if not weights:
             raise gr.Error("請先選一個訓練結果（run）；若沒有，先到「訓練」分頁訓一個。")
         if not plist:
@@ -353,9 +357,10 @@ def build_infer_tab():
         return (gr.update(value=head, visible=True), gr.update(value=gallery),
                 table, items, raw, sw)
 
-    def on_single(weights, raw, sel, thr):
-        if store.PUBLIC:
-            gr.Warning(store.PUBLIC_MSG)
+    def on_single(weights, raw, sel, thr, request: gr.Request = None):
+        from .. import auth
+        if auth.public_locked(request):
+            gr.Warning(auth.locked_msg(request))
             return gr.update(), gr.update(), gr.update(), raw
         res = raw.get("res", [])
         if sel is None or sel >= len(res):
@@ -395,9 +400,10 @@ def build_infer_tab():
         gr.Info("✅ 已匯出 CSV")
         return gr.update(value=fp, visible=True)
 
-    def on_save(raw, thr):
-        if store.PUBLIC:
-            gr.Warning(store.PUBLIC_MSG)
+    def on_save(raw, thr, request: gr.Request = None):
+        from .. import auth
+        if auth.public_locked(request):
+            gr.Warning(auth.locked_msg(request))
             return
         if not raw.get("res"):
             gr.Warning("請先按「▶ 批次計算」產生結果。")
@@ -428,5 +434,5 @@ def build_infer_tab():
     save_btn.click(on_save, [raw_state, thr], None)
     result_gallery.select(on_select, [res_state], [preview_img, preview_meta, sel_state])
 
-    # 回傳供「訓練」分頁『用此模型推論』跨頁帶入專案/run
-    return proj_dd, run_dd
+    # 回傳供「訓練」分頁『用此模型推論』跨頁帶入專案/run；action 鈕供公開站訪客虛化
+    return proj_dd, run_dd, pick_btn, infer_btn, single_btn, save_btn, csv_btn
