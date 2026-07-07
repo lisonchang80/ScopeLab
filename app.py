@@ -945,7 +945,7 @@ def panel_head(tag, en, sub):
 _SETUP_EXE = Path(__file__).resolve().parent / "packaging" / "dist" / "ScopeLab-Setup.exe"
 SETUP_DL_URL = ("/gradio_api/file=" + _quote(_SETUP_EXE.as_posix())) if _SETUP_EXE.exists() else None
 _DL_BTN = (
-    f'<a class="dlbtn" href="{SETUP_DL_URL}" download="ScopeLab-Setup.exe" '
+    f'<a id="sl-dlbtn" class="dlbtn" href="{SETUP_DL_URL}" download="ScopeLab-Setup.exe" '
     f'title="下載 Windows 桌面安裝版（離線標記／訓練／推論；裝到自己機器上用自家 GPU 與資料夾）">'
     f'⬇ 下載桌面版</a>') if SETUP_DL_URL else ''
 _PUBLIC_CHIP = ('<span class="chip" style="background:#C0392B;border:none;color:#fff;">🔒 公開展示模式</span>'
@@ -960,6 +960,52 @@ BRAND_HTML = (
 
 FOOTER_HTML = ('<div class="foot">影像標記 → 匯出 ImageFolder / YOLO / COCO，'
                '可直接對接 <b>ClinScope</b> / <b>MatScope</b> 訓練流程。</div>')
+
+
+# ── WebTour 首次進站導覽（spotlight 遮罩；引擎複製自 ~/.claude/skills/web-tour）──
+# 引擎單檔 static/tour.js，去掉結尾兩行 ES export 後內嵌進 Gradio 的 js= hook（比照 INIT_JS）。
+# selector 全用穩定 elem_id（#sl-*）；Gradio 節點動態掛載，引擎 waitFor 會輪詢等待、
+# 找不到就 warn+跳步不中斷。只在公開站注入（訪客視角文案），見 build() 的 if store.PUBLIC 區塊。
+_TOUR_ENGINE_SRC = (Path(__file__).resolve().parent / "static" / "tour.js").read_text(encoding="utf-8")
+_TOUR_ENGINE_SRC = _TOUR_ENGINE_SRC[: _TOUR_ENGINE_SRC.index("export {")]   # 切掉 ES export 兩行
+_TOUR_STEPS = [
+    {"title": "歡迎使用 ScopeLab",
+     "body": "影像辨識標記工作台：標記 → 訓練 → 推論一站串接。你現在是訪客唯讀模式，可瀏覽既有專案與結果，操作類按鈕會虛化。用 ← → 鍵或「下一步」，Esc 隨時關閉。"},
+    {"selector": "#sl-project-panel", "title": "基本資料", "placement": "right", "interactive": True,
+     "body": "專案規格：名稱、科別、任務（分類／偵測）、類別清單。切換上方下拉可看其他既有專案。"},
+    {"selector": "#sl-image-edit-panel", "title": "影像編輯", "placement": "left",
+     "body": "選取的影像會放大顯示在這裡；點圖可開全螢幕編輯器做縮放、裁切、旋轉、畫框。"},
+    {"selector": "#sl-label-detail", "title": "標記清單", "placement": "top", "interactive": True,
+     "body": "每一列是一張影像與它的分類／框數；上方分頁依類別或已標／未標篩選，也能切「圖示」看縮圖牆。"},
+    {"selector": "#sl-label-toolbar", "title": "載入與匯出", "placement": "bottom",
+     "body": "選資料夾載入影像、指派分類、匯出資料集、一鍵送去訓練都在這排。這些是站主功能，訪客看得到但不能點。"},
+    {"title": "訓練與推論",
+     "body": "上方「訓練」分頁把標好的資料一鍵訓練 ResNet（分類）或 YOLO（偵測），「推論」分頁再用訓練好的模型批次辨識 —— 標記、訓練、推論一站完成。"},
+    {"selector": "#sl-identity", "title": "站主登入", "placement": "bottom",
+     "body": "你是站主的話，在這裡用 Google 登入即可解鎖選資料夾、訓練、推論等操作。"},
+    {"selector": "#sl-dlbtn", "title": "下載桌面版", "placement": "bottom",
+     "body": "想離線不受訪客限制，可下載 Windows 桌面版，本機執行沒有站主限制。"},
+]
+WEBTOUR_JS = (
+    "() => {\n"
+    "  if (window.__sl_tour) return;\n"          # Gradio 有時重連會重觸 demo.load；去重
+    "  window.__sl_tour = true;\n"
+    + _TOUR_ENGINE_SRC + "\n"
+    "  const STEPS = " + json.dumps(_TOUR_STEPS, ensure_ascii=False) + ";\n"
+    # 下載鈕是靜態 HTML（未打包則不存在），boot 當下即可判定 → 不存在就抽掉該步免空等。
+    "  const steps = STEPS.filter(s => s.selector !== '#sl-dlbtn' || document.querySelector('#sl-dlbtn'));\n"
+    "  const opts = { key: 'scopelab', version: 1, accent: '#2f6df6' };\n"
+    "  let tries = 0;\n"
+    "  const boot = () => {\n"
+    "    if (!window.WebTour) return;\n"
+    "    const framed = document.querySelector('.brandbar') && document.querySelector('#sl-project-panel');\n"
+    "    if (!framed && tries++ < 40) { setTimeout(boot, 200); return; }\n"
+    "    window.WebTour.attachHelpButton(steps, opts);\n"
+    "    window.WebTour.autoStartOnce(steps, opts);\n"
+    "  };\n"
+    "  boot();\n"
+    "}\n"
+)
 
 
 # ============================================================================
@@ -1357,7 +1403,7 @@ def build():
             with gr.Tab("🏷 標記", id="label"):
                 # ---- 上排：基本資料(左) + 影像編輯(右) ----
                 with gr.Row(equal_height=False, elem_classes="toprow"):
-                    with gr.Column(scale=5, elem_classes="ls-panel infowin"):
+                    with gr.Column(scale=5, elem_id="sl-project-panel", elem_classes="ls-panel infowin"):
                         gr.HTML(panel_head("基本資料", "BASIC INFO", "要做的模型 / 資料集資訊"))
                         with gr.Column(elem_classes="infoscroll"):
                             with gr.Row(elem_classes="inforow"):
@@ -1384,7 +1430,7 @@ def build():
                                                  placeholder="資料來源、染色 / 拍攝條件、用途…")
                             info_md = gr.Markdown(info_text(S0), elem_classes="infobar")
 
-                    with gr.Column(scale=6, elem_classes="ls-panel"):
+                    with gr.Column(scale=6, elem_id="sl-image-edit-panel", elem_classes="ls-panel"):
                         gr.HTML(panel_head("影像編輯", "IMAGE EDIT", "點圖即放大 → 縮放/裁切/旋轉/增強/畫框 → 存回"))
                         preview_img = gr.Image(show_label=False, elem_classes="preview")
                         preview_meta = gr.Markdown("選一張影像檢視；點圖即放大編輯。", elem_classes="pmeta")
@@ -1394,7 +1440,7 @@ def build():
                 with gr.Row(elem_classes="editrow"):
                     with gr.Column(elem_classes="ls-panel"):
                         gr.HTML(panel_head("分類", "CLASSIFY", "載入未分類影像 · 分頁分類 · ＋ 新增類別 · 匯出"))
-                        with gr.Row(elem_classes="toolbar"):
+                        with gr.Row(elem_id="sl-label-toolbar", elem_classes="toolbar"):
                             folder_btn = gr.Button("📁 選擇資料夾", elem_classes="tbtn", scale=0)
                             view_dd = gr.Dropdown(["👁 詳細資料", "👁 圖示"], value="👁 詳細資料",
                                                   show_label=False, container=False, elem_classes="shortdd")
@@ -1409,7 +1455,7 @@ def build():
                                               container=False, elem_classes="tabstrip")
                         gallery = gr.Gallery(show_label=False, columns=8, object_fit="cover",
                                              allow_preview=False, elem_classes="grid")
-                        detail_html = gr.HTML(detail_html_str(S0), elem_classes="detail")
+                        detail_html = gr.HTML(detail_html_str(S0), elem_id="sl-label-detail", elem_classes="detail")
                         bridge = gr.Textbox("", elem_id="ls-bridge", show_label=False)
                         bridge_btn = gr.Button("bridge", elem_id="ls-trigger")
                         data_box = gr.Textbox("{}", elem_id="ls-data", show_label=False)
@@ -1517,6 +1563,7 @@ def build():
 
             # 公開站：判定身分 → 身分列 + 站主自動開本地模式（checkbox 勾起可見）。
             demo.load(auth.identity_bar, None, [identity_html, local_chk])
+            demo.load(None, None, None, js=WEBTOUR_JS)  # 首次進站導覽（訪客 spotlight + 右下 ? 重播鈕）
             demo.load(_gate_btns, None, OWNER_BTNS)
             local_chk.change(_toggle_local, local_chk, OWNER_BTNS)
             if auth.AUTH_ENABLED:
