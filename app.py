@@ -49,10 +49,13 @@ def new_state(card: dict | None = None) -> dict:
     }
 
 
-def persist(S):
-    """把標記寫回 labels.json（已建立專案才寫）。"""
-    if S.get("slug"):
+def persist(S, request=None):
+    """把標記寫回 labels.json（已建立專案才寫）。回傳是否真的寫入。
+    公開站訪客／站主預覽中（auth.public_locked）一律不寫磁碟：變更只留在該分頁的 session。"""
+    if S.get("slug") and not auth.public_locked(request):
         store.save_labels(S["slug"], {"labels": S["labels"], "edits": S["edits"]})
+        return True
+    return False
 
 
 # ============================================================================
@@ -338,7 +341,9 @@ def _parse_classes(text):
     return out
 
 
-def on_save_card(name, disc, task, author, ver, lic, desc, classes_txt, S):
+def on_save_card(name, disc, task, author, ver, lic, desc, classes_txt, S, request: gr.Request = None):
+    if auth.public_locked(request):    # 寫 card.json / 建專案：訪客直接打 API 也擋（UI 虛化只是第一層）
+        raise gr.Error(auth.locked_msg(request))
     if not (name or "").strip():
         raise gr.Error("請先填寫『專案名稱』。")
     card = store.load_card(S["slug"]) if S.get("slug") else store.blank_card()
@@ -348,7 +353,7 @@ def on_save_card(name, disc, task, author, ver, lic, desc, classes_txt, S):
                  "source_folder": S.get("source_folder", "")})
     card = store.save_card(card)
     S["slug"], S["name"], S["task"], S["classes"] = card["slug"], card["name"], card["task"], card["classes"]
-    persist(S)
+    persist(S, request)
     gr.Info(f"✅ 已儲存專案「{card['name']}」→ projects/{card['slug']}/")
     return (S, gr.update(choices=project_choices(), value=card["slug"]),
             info_text(S), *render4(S), assign_update(S))
@@ -411,13 +416,13 @@ def on_page(page, S):
     return (S, *render4(S), *preview_bundle(S))
 
 
-def on_assign(cls, S):
+def on_assign(cls, S, request: gr.Request = None):
     """工具列『指派分類』下拉：把選取影像設為該類別（cls）。
     ASSIGN_HINT（提示值）與空值不視為指派。"""
     f = S.get("selected")
     if S["task"] == "cls" and f and cls and cls != ASSIGN_HINT and cls in S["classes"]:
         S["labels"][f] = cls
-        persist(S)
+        persist(S, request)
     return (S, *render4(S), *preview_bundle(S), info_text(S))
 
 
@@ -437,7 +442,7 @@ def _noop(S):
             gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update())
 
 
-def on_bridge(payload, S):
+def on_bridge(payload, S, request: gr.Request = None):
     try:
         obj = json.loads(payload or "{}")
     except Exception:
@@ -467,7 +472,7 @@ def on_bridge(payload, S):
             else:
                 S["labels"].pop(f, None)
             S["selected"] = f
-            persist(S)
+            persist(S, request)
         r = render4(S)
         pv = preview_bundle(S)
         return (S, r[0], r[1], r[2], r[3], pv[0], pv[1], pv[2],
@@ -477,7 +482,7 @@ def on_bridge(payload, S):
         name = (obj.get("name") or "").strip()
         if name and name not in S["classes"]:
             S["classes"].append(name)
-            if S.get("slug"):
+            if S.get("slug") and not auth.public_locked(request):   # 訪客：只加在本分頁 session
                 card = store.load_card(S["slug"]) or store.blank_card()
                 card["classes"] = S["classes"]
                 store.save_card(card)
@@ -491,7 +496,8 @@ def on_bridge(payload, S):
         if not f:
             return _noop(S)
         img = obj.get("img")
-        if img:
+        locked = auth.public_locked(request)   # 訪客：不寫 edited/*.png，框只留在本分頁 session
+        if img and not locked:
             if not S.get("slug"):
                 gr.Warning("像素編輯需先儲存專案；本次僅保留標記框。")
             else:
@@ -506,8 +512,8 @@ def on_bridge(payload, S):
             else:
                 S["labels"].pop(f, None)
         S["selected"] = f
-        persist(S)
-        gr.Info("💾 已儲存編輯")
+        if persist(S, request):
+            gr.Info("💾 已儲存編輯")
         r = render4(S)
         pv = preview_bundle(S)
         return (S, r[0], r[1], r[2], r[3], pv[0], pv[1], pv[2],
@@ -548,7 +554,9 @@ def on_export_fmt_change(fmt, S):
             gr.update(value="開始匯出"))
 
 
-def on_export_confirm(fmt, S, progress=gr.Progress()):
+def on_export_confirm(fmt, S, request: gr.Request = None, progress=gr.Progress()):
+    if auth.public_locked(request):    # 寫 exports/（會先刪舊匯出）：訪客一律擋
+        raise gr.Error(auth.locked_msg(request))
     if not S.get("slug"):
         raise gr.Error("請先儲存專案再匯出。")
 
@@ -590,7 +598,9 @@ def on_export_confirm(fmt, S, progress=gr.Progress()):
 # ============================================================================
 #  從「標記」頁直接開始訓練（建輸出資料夾 → 切到訓練頁 → 帶入專案/配方）
 # ============================================================================
-def on_start_train(S):
+def on_start_train(S, request: gr.Request = None):
+    if auth.public_locked(request):    # 會建 runs/ 並導去訓練：訪客一律擋
+        raise gr.Error(auth.locked_msg(request))
     slug = S.get("slug")
     if not slug:
         raise gr.Error("請先儲存基本資料（命名專案）後再開始訓練。")

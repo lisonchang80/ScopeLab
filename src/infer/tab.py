@@ -392,7 +392,11 @@ def build_infer_tab():
         head, gallery, items, table = _render(raw, thr)
         return gr.update(value=table), items, gr.update(value=head, visible=True)
 
-    def on_csv(raw, thr):
+    def on_csv(raw, thr, request: gr.Request = None):
+        from .. import auth
+        if auth.public_locked(request):     # 寫 exports/infer_results.csv：訪客／預覽中一律擋
+            gr.Warning(auth.locked_msg(request))
+            return gr.update(visible=False)
         if not raw.get("res"):
             gr.Warning("請先按「▶ 批次計算」產生結果。")
             return gr.update(visible=False)
