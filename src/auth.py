@@ -29,6 +29,10 @@ COOKIE_NAME = "sl_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 天
 # 站內 Google 登入是否啟用（啟用才 mount /auth 路由 + 顯示登入鈕）
 AUTH_ENABLED = bool(store.PUBLIC and GOOGLE_CLIENT_ID)
+# Cloudflare Access 標頭信任開關。Access 已改 Bypass（匿名可進）後，cf-access-* 標頭
+# 不再由邊緣可信注入——任何經 tunnel 的請求都能自帶 → 預設「不信任」，避免路人冒充站主。
+# 僅在仍把 app 擺在 Access 強制登入後的過渡部署，才顯式設 SCOPELAB_TRUST_CF_ACCESS=1。
+_TRUST_CF_ACCESS = os.environ.get("SCOPELAB_TRUST_CF_ACCESS", "").strip().lower() in ("1", "true", "yes")
 _ID_LOG = store.ROOT / "identity_debug.log"    # 記真流量看到的 email（便於確認，可日後移除）
 
 # 「本地模式」是站主專屬、程序層級的開關（公開站僅一位站主，故用全域旗標即可，
@@ -112,8 +116,14 @@ def _req_email(request):
 
 
 def identity_email(request):
-    """目前登入 email：站內 Google cookie 優先，其次 CF Access 標頭（過渡）；皆無=匿名。"""
-    return _cookie_email(request) or _req_email(request)
+    """目前登入 email：站內 Google 簽章 cookie 優先；僅在顯式開啟 _TRUST_CF_ACCESS 時
+    才採信 CF Access 標頭（Bypass 下該標頭可被偽造，預設關閉）；皆無=匿名。"""
+    email = _cookie_email(request)
+    if email:
+        return email
+    if _TRUST_CF_ACCESS:
+        return _req_email(request)
+    return None
 
 
 def is_owner(request):
