@@ -172,9 +172,11 @@ def build_train_tab():
     refresh_btn.click(on_refresh, None, proj_dd)
     proj_dd.change(on_proj_change, [proj_dd], [recipe_radio])
     detect_btn.click(on_detect, None, device_html)
+    # 吃本機 GPU：與推論共用 concurrency_id="gpu"、limit=1 → 永不並行跑，避免 VRAM OOM / 過載。
     train_btn.click(on_train, [proj_dd, recipe_radio],
                     [train_btn, infer_jump_btn, last_run,
-                     device_html, check_html, eplog_html, result_html])
+                     device_html, check_html, eplog_html, result_html],
+                    concurrency_limit=1, concurrency_id="gpu")
     # 回傳供 app 跨頁接線：標記頁『開始訓練』帶入(proj_dd/recipe_radio)、
     # 訓練完『用此模型推論』帶出(infer_jump_btn/last_run)；train_btn 供公開站訪客虛化
     return proj_dd, recipe_radio, infer_jump_btn, last_run, train_btn

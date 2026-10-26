@@ -1,0 +1,6 @@
+# 測試用（不含 torch / ultralytics：測試不訓練、不推論）
+-r requirements.txt
+itsdangerous>=2.1
+google-auth>=2.20
+pytest>=8
+httpx>=0.27

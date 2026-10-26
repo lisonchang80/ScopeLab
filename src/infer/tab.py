@@ -392,7 +392,11 @@ def build_infer_tab():
         head, gallery, items, table = _render(raw, thr)
         return gr.update(value=table), items, gr.update(value=head, visible=True)
 
-    def on_csv(raw, thr):
+    def on_csv(raw, thr, request: gr.Request = None):
+        from .. import auth
+        if auth.public_locked(request):     # 寫 exports/infer_results.csv：訪客／預覽中一律擋
+            gr.Warning(auth.locked_msg(request))
+            return gr.update(visible=False)
         if not raw.get("res"):
             gr.Warning("請先按「▶ 批次計算」產生結果。")
             return gr.update(visible=False)
@@ -423,10 +427,13 @@ def build_infer_tab():
     run_dd.change(on_run_change, [run_dd], [card_md])
     view_dd.change(on_view, [view_dd], [result_html])
     pick_btn.click(on_pick, None, [picked, count_md, result_gallery, res_state])
+    # 吃本機 GPU：與訓練共用 concurrency_id="gpu"、limit=1 → 不並行、不會把 GPU 吃滿。
     infer_btn.click(on_infer, [run_dd, picked, thr],
-                    [count_md, result_gallery, result_html, res_state, raw_state, switch_dd])
+                    [count_md, result_gallery, result_html, res_state, raw_state, switch_dd],
+                    concurrency_limit=1, concurrency_id="gpu")
     single_btn.click(on_single, [run_dd, raw_state, sel_state, thr],
-                     [result_html, res_state, preview_meta, raw_state])
+                     [result_html, res_state, preview_meta, raw_state],
+                     concurrency_limit=1, concurrency_id="gpu")
     switch_dd.change(on_switch, [switch_dd, raw_state, sel_state, thr],
                      [result_html, res_state, preview_meta, raw_state, switch_dd])
     thr_btn.click(on_apply_thr, [raw_state, thr], [result_html, res_state, count_md])

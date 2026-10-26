@@ -27,8 +27,22 @@ GOOGLE_CLIENT_ID = os.environ.get("SCOPELAB_GOOGLE_CLIENT_ID", "").strip()
 SESSION_SECRET = os.environ.get("SCOPELAB_SESSION_SECRET", "dev-insecure-change-me")
 COOKIE_NAME = "sl_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 天
-# 站內 Google 登入是否啟用（啟用才 mount /auth 路由 + 顯示登入鈕）
-AUTH_ENABLED = bool(store.PUBLIC and GOOGLE_CLIENT_ID)
+# 不安全的 session 金鑰（repo 內公開的 dev 預設值 / 空值）：公開站用這些等於沒簽章。
+_INSECURE_SECRETS = {"", "dev-insecure-change-me"}
+
+
+def _secret_ok():
+    """公開站必須設一把真正的 SESSION_SECRET，否則 cookie 可被偽造成站主。
+    非 PUBLIC（桌面/開發）本機自用，預設金鑰無妨。"""
+    return (not store.PUBLIC) or ((SESSION_SECRET or "").strip() not in _INSECURE_SECRETS)
+
+
+# 站內 Google 登入是否啟用：公開站 + 有 client id + 有安全金鑰（fail-closed）。
+AUTH_ENABLED = bool(store.PUBLIC and GOOGLE_CLIENT_ID and _secret_ok())
+# Cloudflare Access 標頭信任開關。Access 已改 Bypass（匿名可進）後，cf-access-* 標頭
+# 不再由邊緣可信注入——任何經 tunnel 的請求都能自帶 → 預設「不信任」，避免路人冒充站主。
+# 僅在仍把 app 擺在 Access 強制登入後的過渡部署，才顯式設 SCOPELAB_TRUST_CF_ACCESS=1。
+_TRUST_CF_ACCESS = os.environ.get("SCOPELAB_TRUST_CF_ACCESS", "").strip().lower() in ("1", "true", "yes")
 _ID_LOG = store.ROOT / "identity_debug.log"    # 記真流量看到的 email（便於確認，可日後移除）
 
 # 「本地模式」是站主專屬、程序層級的開關（公開站僅一位站主，故用全域旗標即可，
@@ -50,6 +64,8 @@ def make_session(email):
 
 
 def read_session(token):
+    if not _secret_ok():        # 公開站沒設安全金鑰：cookie 可被偽造 → 一律不採信（fail-closed）
+        return None
     try:
         data = _serializer().loads(token, max_age=SESSION_MAX_AGE)
         return (data.get("email") or "").strip().lower() or None
@@ -67,6 +83,12 @@ def verify_google_credential(credential):
                                    clock_skew_in_seconds=30)   # 容忍時鐘差，免「used too early」
     if info.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
         raise ValueError("invalid issuer")
+    # aud / exp 由 verify_oauth2_token 驗過；email_verified 需自己把關——
+    # 未驗證的 email（Google 容許）不得據以登入成站主。
+    if not info.get("email_verified"):
+        raise ValueError("email not verified")
+    if not (info.get("email") or "").strip():
+        raise ValueError("no email in token")
     return info
 
 
@@ -112,18 +134,25 @@ def _req_email(request):
 
 
 def identity_email(request):
-    """目前登入 email：站內 Google cookie 優先，其次 CF Access 標頭（過渡）；皆無=匿名。"""
-    return _cookie_email(request) or _req_email(request)
+    """目前登入 email：站內 Google 簽章 cookie 優先；僅在顯式開啟 _TRUST_CF_ACCESS 時
+    才採信 CF Access 標頭（Bypass 下該標頭可被偽造，預設關閉）；皆無=匿名。"""
+    email = _cookie_email(request)
+    if email:
+        return email
+    if _TRUST_CF_ACCESS:
+        return _req_email(request)
+    return None
 
 
 def is_owner(request):
     """公開站：僅登入 email == OWNER_EMAIL 才是站主（fail-closed —— 匿名/不符一律訪客）。
-    桌面/dev（非 PUBLIC）或設 SCOPELAB_FORCE_OWNER 時一律站主。"""
+    桌面/dev（非 PUBLIC）一律站主。
+    ⚠️ SCOPELAB_FORCE_OWNER 是本機/桌面的放行捷徑，在公開站（PUBLIC=1）一律忽略——
+    否則誤設一個環境變數就讓全站任何人變站主（owner-mode skill 載明正式站絕不設）。"""
     if not store.PUBLIC:
         return True
-    if os.environ.get("SCOPELAB_FORCE_OWNER", "").strip():
-        return True
-    return identity_email(request) == OWNER_EMAIL
+    # 公開站忽略 SCOPELAB_FORCE_OWNER，一律走登入判定（owner email 比對）。
+    return bool(OWNER_EMAIL) and identity_email(request) == OWNER_EMAIL
 
 
 def set_local_mode(on):
@@ -159,6 +188,21 @@ def guard_owner(request):
         raise gr.Error("僅站主可執行此操作（您目前為訪客／唯讀）。")
 
 
+def _same_origin(request):
+    """CSRF 防線：POST 若帶了跨站 Origin（含其他 *.tinghaochang.com 子網域）就擋。
+    app 自己的 fetch 是同源（Origin host == Host）；瀏覽器導覽有時不帶 Origin → 放行。"""
+    try:
+        origin = request.headers.get("origin")
+        if not origin:
+            return True
+        from urllib.parse import urlsplit
+        o = urlsplit(origin).netloc.lower()
+        host = (request.headers.get("host") or "").lower()
+        return bool(o) and o == host
+    except Exception:
+        return False
+
+
 def add_auth_routes(fastapi_app):
     """掛在 Gradio 底層 FastAPI 上的登入/登出端點（站內 Google 登入）。"""
     from fastapi.responses import JSONResponse
@@ -166,6 +210,8 @@ def add_auth_routes(fastapi_app):
 
     @fastapi_app.post("/auth/google")
     async def _auth_google(request: Request):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-origin blocked"}, status_code=403)
         try:
             body = await request.json()
         except Exception:
@@ -181,10 +227,27 @@ def add_auth_routes(fastapi_app):
         return resp
 
     @fastapi_app.post("/auth/logout")
-    async def _auth_logout():
+    async def _auth_logout(request: Request):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-origin blocked"}, status_code=403)
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(COOKIE_NAME, path="/")
         return resp
+
+
+def add_upload_guard(fastapi_app):
+    """公開站：非站主不得 POST 到 Gradio 的檔案上傳端點。
+    ScopeLab 沒有任何上傳輸入元件（影像走伺服器端原生選夾），但 /gradio_api/upload 端點
+    仍開著——匿名訪客可往伺服器暫存夾塞檔塞爆硬碟。站主（本地模式）照常。"""
+    from starlette.responses import JSONResponse
+
+    @fastapi_app.middleware("http")
+    async def _guard_upload(request, call_next):
+        path = request.url.path.rstrip("/")
+        if request.method == "POST" and path.endswith("/upload") and "gradio_api" in path:
+            if public_locked(request):
+                return JSONResponse({"error": "僅站主可上傳（您目前為訪客／唯讀）。"}, status_code=403)
+        return await call_next(request)
 
 
 def identity_bar(request: gr.Request):

@@ -95,9 +95,33 @@ exports/               匯出輸出（git 忽略）
 - 偵測：`{"labels": {"<影像路徑>": [{"cls": "類別", "x": .., "y": .., "w": .., "h": ..}]}, ...}`
   （座標皆正規化 0–1，左上角 x,y + 寬高 w,h）
 
+## 測試
+
+網頁／API 層的身分、權限、路徑與上傳處理測試（不訓練、不推論、不連網）：
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+測試一律以公開站模式（`SCOPELAB_PUBLIC=1`）跑，用合成站主與暫存資料根，不碰 `projects/`。
+重點涵蓋：訪客直接打 Gradio API（`/gradio_api/queue/join`）也不能寫檔／吃 GPU、身分驗證
+（Google ID token、cookie 簽章、CF 標頭信任）、對外檔案服務範圍與匿名上傳、路徑穿越。
+
 ## 部署
 
 公開上線可比照 ClinScope：環境變數 `SCOPELAB_AUTH_USER` / `SCOPELAB_AUTH_PASS` 開帳密登入、
 `SCOPELAB_ALLOWED_PATHS`（分號分隔）收緊可讀資料夾、`SCOPELAB_PORT` 改埠（預設 7861）。
+
+公開站（`SCOPELAB_PUBLIC=1`）的安全必備環境變數：
+
+- `SCOPELAB_SESSION_SECRET`：**必設**一把隨機長字串（`python -c "import secrets;print(secrets.token_urlsafe(48))"`）。
+  沒設則站內 Google 登入自動停用、所有 cookie 不採信（fail-closed，避免被偽造成站主）。
+- `SCOPELAB_GOOGLE_CLIENT_ID`：站內 Google 登入用。
+- `SCOPELAB_ALLOWED_PATHS`：公開站務必設（例 `D:\Claude code\ScopeLab`）。沒設時公開站只服務
+  專案／範例夾（不再預設開放整顆磁碟）。`.git`、`env.local.bat`、`identity_debug.log` 一律擋。
+- `SCOPELAB_TRUST_CF_ACCESS=1`：僅在仍把站擺在 Cloudflare Access 強制登入後才設；Access 改 Bypass
+  後務必**不要**設（否則 `cf-access-*` 標頭可被偽造成站主）。
+- `SCOPELAB_FORCE_OWNER`：本機／桌面捷徑，公開站一律忽略（正式站絕不設）。
 
 > 研究／作品集用途。

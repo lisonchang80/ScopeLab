@@ -49,10 +49,13 @@ def new_state(card: dict | None = None) -> dict:
     }
 
 
-def persist(S):
-    """把標記寫回 labels.json（已建立專案才寫）。"""
-    if S.get("slug"):
+def persist(S, request=None):
+    """把標記寫回 labels.json（已建立專案才寫）。回傳是否真的寫入。
+    公開站訪客／站主預覽中（auth.public_locked）一律不寫磁碟：變更只留在該分頁的 session。"""
+    if S.get("slug") and not auth.public_locked(request):
         store.save_labels(S["slug"], {"labels": S["labels"], "edits": S["edits"]})
+        return True
+    return False
 
 
 # ============================================================================
@@ -338,7 +341,9 @@ def _parse_classes(text):
     return out
 
 
-def on_save_card(name, disc, task, author, ver, lic, desc, classes_txt, S):
+def on_save_card(name, disc, task, author, ver, lic, desc, classes_txt, S, request: gr.Request = None):
+    if auth.public_locked(request):    # 寫 card.json / 建專案：訪客直接打 API 也擋（UI 虛化只是第一層）
+        raise gr.Error(auth.locked_msg(request))
     if not (name or "").strip():
         raise gr.Error("請先填寫『專案名稱』。")
     card = store.load_card(S["slug"]) if S.get("slug") else store.blank_card()
@@ -348,7 +353,7 @@ def on_save_card(name, disc, task, author, ver, lic, desc, classes_txt, S):
                  "source_folder": S.get("source_folder", "")})
     card = store.save_card(card)
     S["slug"], S["name"], S["task"], S["classes"] = card["slug"], card["name"], card["task"], card["classes"]
-    persist(S)
+    persist(S, request)
     gr.Info(f"✅ 已儲存專案「{card['name']}」→ projects/{card['slug']}/")
     return (S, gr.update(choices=project_choices(), value=card["slug"]),
             info_text(S), *render4(S), assign_update(S))
@@ -411,13 +416,13 @@ def on_page(page, S):
     return (S, *render4(S), *preview_bundle(S))
 
 
-def on_assign(cls, S):
+def on_assign(cls, S, request: gr.Request = None):
     """工具列『指派分類』下拉：把選取影像設為該類別（cls）。
     ASSIGN_HINT（提示值）與空值不視為指派。"""
     f = S.get("selected")
     if S["task"] == "cls" and f and cls and cls != ASSIGN_HINT and cls in S["classes"]:
         S["labels"][f] = cls
-        persist(S)
+        persist(S, request)
     return (S, *render4(S), *preview_bundle(S), info_text(S))
 
 
@@ -437,7 +442,7 @@ def _noop(S):
             gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update())
 
 
-def on_bridge(payload, S):
+def on_bridge(payload, S, request: gr.Request = None):
     try:
         obj = json.loads(payload or "{}")
     except Exception:
@@ -467,7 +472,7 @@ def on_bridge(payload, S):
             else:
                 S["labels"].pop(f, None)
             S["selected"] = f
-            persist(S)
+            persist(S, request)
         r = render4(S)
         pv = preview_bundle(S)
         return (S, r[0], r[1], r[2], r[3], pv[0], pv[1], pv[2],
@@ -477,7 +482,7 @@ def on_bridge(payload, S):
         name = (obj.get("name") or "").strip()
         if name and name not in S["classes"]:
             S["classes"].append(name)
-            if S.get("slug"):
+            if S.get("slug") and not auth.public_locked(request):   # 訪客：只加在本分頁 session
                 card = store.load_card(S["slug"]) or store.blank_card()
                 card["classes"] = S["classes"]
                 store.save_card(card)
@@ -488,10 +493,12 @@ def on_bridge(payload, S):
 
     if a == "editor_save":
         f = obj.get("path") or S.get("selected")
-        if not f:
+        # path 來自前端，只接受本專案已載入的影像；其他路徑一律忽略（不預覽、不寫進 labels.json）
+        if not f or f not in S.get("files", []):
             return _noop(S)
         img = obj.get("img")
-        if img:
+        locked = auth.public_locked(request)   # 訪客：不寫 edited/*.png，框只留在本分頁 session
+        if img and not locked:
             if not S.get("slug"):
                 gr.Warning("像素編輯需先儲存專案；本次僅保留標記框。")
             else:
@@ -506,8 +513,8 @@ def on_bridge(payload, S):
             else:
                 S["labels"].pop(f, None)
         S["selected"] = f
-        persist(S)
-        gr.Info("💾 已儲存編輯")
+        if persist(S, request):
+            gr.Info("💾 已儲存編輯")
         r = render4(S)
         pv = preview_bundle(S)
         return (S, r[0], r[1], r[2], r[3], pv[0], pv[1], pv[2],
@@ -548,7 +555,9 @@ def on_export_fmt_change(fmt, S):
             gr.update(value="開始匯出"))
 
 
-def on_export_confirm(fmt, S, progress=gr.Progress()):
+def on_export_confirm(fmt, S, request: gr.Request = None, progress=gr.Progress()):
+    if auth.public_locked(request):    # 寫 exports/（會先刪舊匯出）：訪客一律擋
+        raise gr.Error(auth.locked_msg(request))
     if not S.get("slug"):
         raise gr.Error("請先儲存專案再匯出。")
 
@@ -590,7 +599,9 @@ def on_export_confirm(fmt, S, progress=gr.Progress()):
 # ============================================================================
 #  從「標記」頁直接開始訓練（建輸出資料夾 → 切到訓練頁 → 帶入專案/配方）
 # ============================================================================
-def on_start_train(S):
+def on_start_train(S, request: gr.Request = None):
+    if auth.public_locked(request):    # 會建 runs/ 並導去訓練：訪客一律擋
+        raise gr.Error(auth.locked_msg(request))
     slug = S.get("slug")
     if not slug:
         raise gr.Error("請先儲存基本資料（命名專案）後再開始訓練。")
@@ -1554,7 +1565,8 @@ def build():
                 # 站主勾/取消「本地模式」：勾=可完整操作；取消=預覽訪客唯讀（鈕虛化+後端擋）。
                 owner = auth.is_owner(request)
                 active = bool(on) and owner
-                auth.set_local_mode(active)
+                if owner:   # 全域旗標只准站主改：訪客打這支 API 不得把已登入站主一起鎖掉
+                    auth.set_local_mode(active)
                 # 只在「進入預覽（關閉）」時提示；開啟時 checkbox 勾起本身即自明，避免每次載入都跳 toast。
                 if owner and not active:
                     gr.Info("👁 預覽訪客唯讀中。勾回「本地模式」即可恢復操作。")
@@ -1568,34 +1580,72 @@ def build():
             local_chk.change(_toggle_local, local_chk, OWNER_BTNS)
             if auth.AUTH_ENABLED:
                 demo.load(None, None, None, js=auth.AUTH_JS)   # 站內 Google 登入（登入/登出鈕 + GSI）
+    # 佇列上限：避免大量請求把 backlog 無限堆高（GPU 事件另有 concurrency_id="gpu" 限 1）。
+    demo.queue(max_size=int(os.environ.get("SCOPELAB_QUEUE_MAX", "64") or 64))
     return demo
 
 
-def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **ov):
+def _file_access_paths():
+    """算出 Gradio /gradio_api/file= 的 (allowed_paths, blocked_paths)。
+
+    安全要點：
+    - 公開站沒設 SCOPELAB_ALLOWED_PATHS 時，預設只服務專案/範例資料夾，**絕不**整顆磁碟
+      （原本預設 C:\\ D:\\… 會把整台機器的檔案開放給匿名訪客）。桌面/開發才沿用磁碟根，
+      因為桌面版要能顯示使用者在任意位置挑選的影像。
+    - 下載桌面版只需那一個 .exe → 只允許該檔本身，而非整個 packaging/dist 目錄。
+    - blocked_paths 優先於 allowed_paths：擋掉落在 allowed 內的敏感檔
+      （.git、含祕密的 env.local.bat、記錄訪客 email 的 identity_debug.log）。
+    """
+    root = Path(__file__).resolve().parent
     env_paths = os.environ.get("SCOPELAB_ALLOWED_PATHS", "").strip()
     if env_paths:
         allowed = [p.strip() for p in env_paths.split(";") if p.strip() and Path(p.strip()).exists()]
+    elif store.PUBLIC:
+        # 公開站 fail-safe 預設：只開放資料/範例夾，不開放整顆磁碟。
+        cand = [store.DATA_ROOT, store.PROJECTS, root / "samples", root / "static"]
+        allowed = [str(p) for p in cand if Path(p).exists()]
     else:
         allowed = [f"{d}:\\" for d in "CDEFGHIJKLMNOPQRSTUVWXYZ" if Path(f"{d}:\\").exists()]
-    # 確保「下載桌面版」按鈕能透過 /gradio_api/file= 取得安裝檔（不論 allowed env 怎麼設）
-    _dist = str(Path(__file__).resolve().parent / "packaging" / "dist")
-    if Path(_dist).exists() and _dist not in allowed:
-        allowed.append(_dist)
+
+    # 下載桌面版：只允許那一個安裝檔，不開放整個 dist 目錄（內含整包 onedir）。
+    _exe = root / "packaging" / "dist" / "ScopeLab-Setup.exe"
+    if _exe.exists() and str(_exe) not in allowed:
+        allowed.append(str(_exe))
+
+    # 擋掉落在 allowed 內、絕不可對外的檔／目錄（blocked 優先於 allowed）。
+    blocked = [
+        str(root / ".git"),
+        str(root / "packaging" / "autostart" / "env.local.bat"),
+        str(root / "identity_debug.log"),
+        str(store.DATA_ROOT / "identity_debug.log"),
+    ]
+    return allowed, blocked
+
+
+def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **ov):
+    allowed, blocked = _file_access_paths()
+    # 匿名上傳會往伺服器暫存夾寫檔（吃本機硬碟）；公開站限制單檔大小並定期清快取。
+    max_file_size = os.environ.get("SCOPELAB_MAX_UPLOAD_MB")
+    max_file_size = f"{int(max_file_size)}mb" if (max_file_size or "").strip().isdigit() else ("25mb" if store.PUBLIC else None)
+    delete_cache = (1800, 1800) if store.PUBLIC else None
     _u, _p = os.environ.get("SCOPELAB_AUTH_USER"), os.environ.get("SCOPELAB_AUTH_PASS")
     basic_auth = (_u, _p) if (_u and _p) else None
     port = int(server_port or os.environ.get("SCOPELAB_PORT", 7861) or 7861)
     print(f"[ScopeLab] {len(store.list_projects())} projects | allowed_paths={allowed} | "
-          f"basic_auth={'on' if basic_auth else 'off'} | "
+          f"blocked={len(blocked)} | basic_auth={'on' if basic_auth else 'off'} | "
           f"mode={'PUBLIC' if store.PUBLIC else 'local'} | "
           f"google-login={'ON' if auth.AUTH_ENABLED else 'off'}")
     demo = build()
+    demo.delete_cache = delete_cache     # mount_gradio_app 不收 delete_cache，設在 Blocks 上
     if auth.AUTH_ENABLED:
         # 站內 Google 登入：掛自訂 /auth/* 路由到 Gradio 底層 FastAPI，再用 uvicorn 起（127.0.0.1，經 tunnel）。
         import uvicorn
         from fastapi import FastAPI
         fastapi_app = FastAPI()
         auth.add_auth_routes(fastapi_app)
+        auth.add_upload_guard(fastapi_app)   # 公開站：非站主不得 POST /gradio_api/upload（防匿名塞爆硬碟）
         mounted = gr.mount_gradio_app(fastapi_app, demo, path="/", allowed_paths=allowed,
+                                      blocked_paths=blocked, max_file_size=max_file_size,
                                       theme=THEME, css=CSS, show_error=True)
         server = uvicorn.Server(uvicorn.Config(mounted, host="127.0.0.1", port=port, log_level="warning"))
         if prevent_thread_lock:
@@ -1604,8 +1654,11 @@ def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **o
             return mounted
         server.run()
         return mounted
-    kw = dict(theme=THEME, css=CSS, allowed_paths=allowed,
+    kw = dict(theme=THEME, css=CSS, allowed_paths=allowed, blocked_paths=blocked,
+              delete_cache=delete_cache,
               prevent_thread_lock=prevent_thread_lock, inbrowser=inbrowser)
+    if max_file_size:
+        kw["max_file_size"] = max_file_size
     if basic_auth:
         kw["auth"] = basic_auth
     if server_port:
