@@ -250,6 +250,22 @@ def add_upload_guard(fastapi_app):
         return await call_next(request)
 
 
+def add_file_guard(fastapi_app, is_private):
+    """公開站：非站主不得經 /gradio_api/file= 直接抓 is_private(路徑) 為真的檔（匯出結果、訓練權重）。
+    不放進 blocked_paths：站主按「下載 CSV／ZIP」時 Gradio 要先把 exports/ 的檔複製進快取，
+    blocked 會連站主一起擋。標註畫面的原圖不在這兩類目錄，照常服務。"""
+    from urllib.parse import unquote
+    from starlette.responses import JSONResponse
+
+    @fastapi_app.middleware("http")
+    async def _guard_file(request, call_next):
+        path = request.url.path
+        i = path.find("/file=")
+        if i >= 0 and public_locked(request) and is_private(unquote(path[i + len("/file="):])):
+            return JSONResponse({"error": "僅站主可下載這個檔案。"}, status_code=403)
+        return await call_next(request)
+
+
 def identity_bar(request: gr.Request):
     """載入時判定身分 → 回 (身分列HTML, 本地模式checkbox 更新)。公開站專用。
     站主一登入即自動開「本地模式」→ 限制立即解除（免再手動勾）；可再手動取消以預覽訪客。"""

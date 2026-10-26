@@ -34,8 +34,9 @@ os.environ.update({
     "SCOPELAB_SESSION_SECRET": "test-only-session-secret",
     "SCOPELAB_DATA_DIR": str(DATA),
     "SCOPELAB_COOKIE_SECURE": "0",
-    # 比照正式站 autostart：允許整個 repo 根 + 合成影像夾
-    "SCOPELAB_ALLOWED_PATHS": f"{ROOT};{IMAGES}",
+    # 比照正式站 autostart：允許整個 repo 根 + 合成影像夾。
+    # 正式站的資料根就是 repo 根（exports/、projects/ 都落在 allowed 內）；測試資料根在暫存夾，一併放進來才一樣。
+    "SCOPELAB_ALLOWED_PATHS": f"{ROOT};{IMAGES};{DATA}",
     "GRADIO_TEMP_DIR": str(TMP / "gradio"),
     "GRADIO_ANALYTICS_ENABLED": "False",
 })

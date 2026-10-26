@@ -45,6 +45,60 @@ def test_sample_image_served(server):
     assert r.status_code == 200
 
 
+# ---- 匯出結果與訓練權重只給站主（路徑猜得到也不行） -------------------------------
+def _private_files():
+    exp = store.DATA_ROOT / "exports" / "infer_results.csv"
+    exp.parent.mkdir(parents=True, exist_ok=True)
+    exp.write_text("file,class\n", encoding="utf-8")
+    pt = store.PROJECTS / "demo" / "runs" / "20990101-000000" / "best.pt"
+    pt.parent.mkdir(parents=True, exist_ok=True)
+    pt.write_bytes(b"weights")
+    return exp, pt
+
+
+def test_exports_and_weights_blocked_for_anonymous(server):
+    exp, pt = _private_files()
+    with server.client() as c:
+        for p in (exp, pt):
+            assert c.get(_file_url(p)).status_code == 403, p
+
+
+def test_private_files_blocked_via_dotdot_and_case(server):
+    exp, pt = _private_files()
+    from urllib.parse import quote
+    sneaky = [
+        str(store.PROJECTS / "demo" / ".." / "demo" / "runs" / "20990101-000000" / "best.pt"),
+        str(exp).replace("exports", "EXPORTS"),
+    ]
+    with server.client() as c:
+        for s in sneaky:
+            assert c.get("/gradio_api/file=" + quote(s.replace("\\", "/"))).status_code == 403, s
+
+
+def test_owner_can_still_fetch_private_files(server):
+    exp, pt = _private_files()
+    with server.client(cookies=owner_cookies()) as c:
+        for p in (exp, pt):
+            assert c.get(_file_url(p)).status_code == 200, p
+
+
+def test_labeling_images_still_served_to_anonymous(server):
+    # 標註畫面的原圖（專案來源資料夾）不受影響
+    img = next(p for p in (ROOT / "samples" / "shapes").glob("*.png"))
+    with server.client() as c:
+        assert c.get(_file_url(img)).status_code == 200
+
+
+def test_public_without_google_login_blocks_private_dirs(monkeypatch):
+    # 公開站沒開 Google 登入時沒有站主、也掛不了中介層 ⇒ 直接把兩類目錄放進 blocked_paths
+    monkeypatch.setattr(store, "PUBLIC", True)
+    monkeypatch.setattr(app.auth, "AUTH_ENABLED", False)
+    _private_files()
+    _, blocked = app._file_access_paths()
+    assert str(store.DATA_ROOT / "exports") in blocked
+    assert str(store.PROJECTS / "demo" / "runs") in blocked
+
+
 # ---- allowed / blocked 計算（公開站 fail-safe 預設不開放整顆磁碟） -----------------
 def test_public_default_paths_are_scoped(monkeypatch):
     monkeypatch.delenv("SCOPELAB_ALLOWED_PATHS", raising=False)

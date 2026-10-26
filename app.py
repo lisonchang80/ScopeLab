@@ -1619,7 +1619,29 @@ def _file_access_paths():
         str(root / "identity_debug.log"),
         str(store.DATA_ROOT / "identity_debug.log"),
     ]
+    # 匯出結果與訓練權重：有 Google 登入時由 auth.add_file_guard 只擋非站主（站主還要下載 CSV／ZIP）；
+    # 公開站沒開登入時沒有站主、也掛不了中介層，直接整個擋（新建的專案要重啟才會列進來）。
+    if store.PUBLIC and not auth.AUTH_ENABLED:
+        blocked.append(str(store.DATA_ROOT / "exports"))
+        blocked += [str(p / "runs") for p in store.PROJECTS.iterdir() if (p / "runs").is_dir()]
     return allowed, blocked
+
+
+def _private_file(path: str) -> bool:
+    """/gradio_api/file= 要的檔是不是匯出結果（exports/）或訓練輸出（projects/<專案>/runs/）。
+    先 realpath 去掉 ..，再 normcase（Windows 不分大小寫，EXPORTS 也算）；解析不了就當私有。"""
+    try:
+        p = os.path.normcase(os.path.realpath(path))
+    except (OSError, ValueError):
+        return True
+    norm = lambda q: os.path.normcase(os.path.realpath(q))
+    exports, projects = norm(store.DATA_ROOT / "exports"), norm(store.PROJECTS)
+    if p == exports or p.startswith(exports + os.sep):
+        return True
+    if p.startswith(projects + os.sep):
+        parts = p[len(projects) + 1:].split(os.sep)
+        return len(parts) > 1 and parts[1] == os.path.normcase("runs")
+    return False
 
 
 def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **ov):
@@ -1644,6 +1666,7 @@ def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **o
         fastapi_app = FastAPI()
         auth.add_auth_routes(fastapi_app)
         auth.add_upload_guard(fastapi_app)   # 公開站：非站主不得 POST /gradio_api/upload（防匿名塞爆硬碟）
+        auth.add_file_guard(fastapi_app, _private_file)   # 公開站：匯出結果與訓練權重只給站主
         mounted = gr.mount_gradio_app(fastapi_app, demo, path="/", allowed_paths=allowed,
                                       blocked_paths=blocked, max_file_size=max_file_size,
                                       theme=THEME, css=CSS, show_error=True)

@@ -39,7 +39,7 @@ def test_slugify_collapses_separators():
 def test_detail_html_escapes_class_and_name(tmp_path):
     payload = '<img src=x onerror=alert(1)>'
     img = tmp_path / f"{payload}.png"      # 檔名帶惡意（folder scan 來源）
-    img.write_bytes(b"x")
+    # 不實際建檔：Windows 檔名不能有 < >（正式站就在 Windows），detail_html_str 也只用到路徑字串
     S = app.new_state({"slug": "", "name": "p", "task": "cls", "classes": [payload]})
     S["files"] = [str(img)]
     S["labels"] = {str(img): payload}
