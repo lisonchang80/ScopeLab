@@ -27,8 +27,18 @@ GOOGLE_CLIENT_ID = os.environ.get("SCOPELAB_GOOGLE_CLIENT_ID", "").strip()
 SESSION_SECRET = os.environ.get("SCOPELAB_SESSION_SECRET", "dev-insecure-change-me")
 COOKIE_NAME = "sl_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 30      # 30 天
-# 站內 Google 登入是否啟用（啟用才 mount /auth 路由 + 顯示登入鈕）
-AUTH_ENABLED = bool(store.PUBLIC and GOOGLE_CLIENT_ID)
+# 不安全的 session 金鑰（repo 內公開的 dev 預設值 / 空值）：公開站用這些等於沒簽章。
+_INSECURE_SECRETS = {"", "dev-insecure-change-me"}
+
+
+def _secret_ok():
+    """公開站必須設一把真正的 SESSION_SECRET，否則 cookie 可被偽造成站主。
+    非 PUBLIC（桌面/開發）本機自用，預設金鑰無妨。"""
+    return (not store.PUBLIC) or ((SESSION_SECRET or "").strip() not in _INSECURE_SECRETS)
+
+
+# 站內 Google 登入是否啟用：公開站 + 有 client id + 有安全金鑰（fail-closed）。
+AUTH_ENABLED = bool(store.PUBLIC and GOOGLE_CLIENT_ID and _secret_ok())
 # Cloudflare Access 標頭信任開關。Access 已改 Bypass（匿名可進）後，cf-access-* 標頭
 # 不再由邊緣可信注入——任何經 tunnel 的請求都能自帶 → 預設「不信任」，避免路人冒充站主。
 # 僅在仍把 app 擺在 Access 強制登入後的過渡部署，才顯式設 SCOPELAB_TRUST_CF_ACCESS=1。
@@ -54,6 +64,8 @@ def make_session(email):
 
 
 def read_session(token):
+    if not _secret_ok():        # 公開站沒設安全金鑰：cookie 可被偽造 → 一律不採信（fail-closed）
+        return None
     try:
         data = _serializer().loads(token, max_age=SESSION_MAX_AGE)
         return (data.get("email") or "").strip().lower() or None
