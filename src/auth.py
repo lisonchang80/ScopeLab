@@ -83,6 +83,12 @@ def verify_google_credential(credential):
                                    clock_skew_in_seconds=30)   # 容忍時鐘差，免「used too early」
     if info.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
         raise ValueError("invalid issuer")
+    # aud / exp 由 verify_oauth2_token 驗過；email_verified 需自己把關——
+    # 未驗證的 email（Google 容許）不得據以登入成站主。
+    if not info.get("email_verified"):
+        raise ValueError("email not verified")
+    if not (info.get("email") or "").strip():
+        raise ValueError("no email in token")
     return info
 
 
