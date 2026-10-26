@@ -1565,7 +1565,8 @@ def build():
                 # 站主勾/取消「本地模式」：勾=可完整操作；取消=預覽訪客唯讀（鈕虛化+後端擋）。
                 owner = auth.is_owner(request)
                 active = bool(on) and owner
-                auth.set_local_mode(active)
+                if owner:   # 全域旗標只准站主改：訪客打這支 API 不得把已登入站主一起鎖掉
+                    auth.set_local_mode(active)
                 # 只在「進入預覽（關閉）」時提示；開啟時 checkbox 勾起本身即自明，避免每次載入都跳 toast。
                 if owner and not active:
                     gr.Info("👁 預覽訪客唯讀中。勾回「本地模式」即可恢復操作。")
