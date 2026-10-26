@@ -188,6 +188,21 @@ def guard_owner(request):
         raise gr.Error("僅站主可執行此操作（您目前為訪客／唯讀）。")
 
 
+def _same_origin(request):
+    """CSRF 防線：POST 若帶了跨站 Origin（含其他 *.tinghaochang.com 子網域）就擋。
+    app 自己的 fetch 是同源（Origin host == Host）；瀏覽器導覽有時不帶 Origin → 放行。"""
+    try:
+        origin = request.headers.get("origin")
+        if not origin:
+            return True
+        from urllib.parse import urlsplit
+        o = urlsplit(origin).netloc.lower()
+        host = (request.headers.get("host") or "").lower()
+        return bool(o) and o == host
+    except Exception:
+        return False
+
+
 def add_auth_routes(fastapi_app):
     """掛在 Gradio 底層 FastAPI 上的登入/登出端點（站內 Google 登入）。"""
     from fastapi.responses import JSONResponse
@@ -195,6 +210,8 @@ def add_auth_routes(fastapi_app):
 
     @fastapi_app.post("/auth/google")
     async def _auth_google(request: Request):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-origin blocked"}, status_code=403)
         try:
             body = await request.json()
         except Exception:
@@ -210,7 +227,9 @@ def add_auth_routes(fastapi_app):
         return resp
 
     @fastapi_app.post("/auth/logout")
-    async def _auth_logout():
+    async def _auth_logout(request: Request):
+        if not _same_origin(request):
+            return JSONResponse({"error": "cross-origin blocked"}, status_code=403)
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(COOKIE_NAME, path="/")
         return resp

@@ -1,8 +1,5 @@
 """verify_google_credential：驗簽（委派 google-auth，傳 client id 等於驗 aud + 驗 exp）之外，
 額外把關 iss 與 email_verified——未驗證的 email 不得登入成站主。"""
-import sys
-import types
-
 import pytest
 
 from src import auth
@@ -10,24 +7,22 @@ from src import auth
 
 @pytest.fixture()
 def fake_google(monkeypatch):
-    """stub google-auth：不連網、不驗真簽章，只回我們指定的 claims。"""
+    """stub google-auth：不連網、不驗真簽章，只回我們指定的 claims。
+    直接打補丁在真模組的屬性上（verify_google_credential 用 `from ... import` 取值，
+    patch sys.modules 會被已載入的真模組蓋過，故改 patch 屬性）。"""
+    import google.auth.transport.requests as g_requests
+    import google.oauth2.id_token as gid
+
     captured = {}
-
-    transport = types.ModuleType("google.auth.transport.requests")
-    transport.Request = lambda *a, **k: object()
-
-    idtok = types.ModuleType("google.oauth2.id_token")
-
     claims = {"value": {"iss": "https://accounts.google.com", "email": "owner@example.com",
                         "email_verified": True, "aud": auth.GOOGLE_CLIENT_ID}}
 
     def verify(credential, request, audience, clock_skew_in_seconds=0):
         captured["audience"] = audience
         return claims["value"]
-    idtok.verify_oauth2_token = verify
 
-    monkeypatch.setitem(sys.modules, "google.auth.transport.requests", transport)
-    monkeypatch.setitem(sys.modules, "google.oauth2.id_token", idtok)
+    monkeypatch.setattr(g_requests, "Request", lambda *a, **k: object())
+    monkeypatch.setattr(gid, "verify_oauth2_token", verify)
     return claims, captured
 
 
