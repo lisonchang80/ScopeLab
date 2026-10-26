@@ -140,12 +140,13 @@ def identity_email(request):
 
 def is_owner(request):
     """公開站：僅登入 email == OWNER_EMAIL 才是站主（fail-closed —— 匿名/不符一律訪客）。
-    桌面/dev（非 PUBLIC）或設 SCOPELAB_FORCE_OWNER 時一律站主。"""
+    桌面/dev（非 PUBLIC）一律站主。
+    ⚠️ SCOPELAB_FORCE_OWNER 是本機/桌面的放行捷徑，在公開站（PUBLIC=1）一律忽略——
+    否則誤設一個環境變數就讓全站任何人變站主（owner-mode skill 載明正式站絕不設）。"""
     if not store.PUBLIC:
         return True
-    if os.environ.get("SCOPELAB_FORCE_OWNER", "").strip():
-        return True
-    return identity_email(request) == OWNER_EMAIL
+    # 公開站忽略 SCOPELAB_FORCE_OWNER，一律走登入判定（owner email 比對）。
+    return bool(OWNER_EMAIL) and identity_email(request) == OWNER_EMAIL
 
 
 def set_local_mode(on):
