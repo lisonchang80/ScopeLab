@@ -32,7 +32,7 @@ Cloudflare Access(Google 登入)擋。**本機是真正在跑的地方,Cloudflar
 | **確認 Access 守門** | `curl.exe -s -o NUL -w "%{http_code}" https://scopelab.tinghaochang.com` → **302**=正常(導向 Access 登入頁);**200 直接進站**=Access 失效要查;**502**=回源斷;**530 + 錯誤 1033**=cloudflared 沒連上(多半 tunnel 死) |
 | **改誰能登入** | one.dash.cloudflare.com → Access → Applications → `scopelab` → Policies → 編輯 `任何登入者`:`Everyone`=任何真人 / 改 `Emails` 白名單=限特定人 |
 | **改登入方式** | Access → Applications → `scopelab` → Authentication(關/開 IdP) |
-| **收緊檔案曝險** | 自啟/啟動環境設 `SCOPELAB_ALLOWED_PATHS=D:\Claude code\ScopeLab`(只服務專案夾、不曝 C:\Users;autostart 已設);亦可 `SCOPELAB_AUTH_USER/PASS` 加 Gradio 密碼(Access 已是更強的邊緣驗證) |
+| **收緊檔案曝險** | 自啟/啟動環境設 `SCOPELAB_ALLOWED_PATHS=D:\Claude code\ScopeLab`(只服務專案夾、不曝 C:\Users;autostart 已設);亦可 `SCOPELAB_AUTH_USER/PASS` 加 Gradio 密碼(Access 已是更強的邊緣驗證)。repo 根裡的 `exports/`、`projects/*/runs/`(推論結果、best.pt)由 `auth.add_file_guard` 只給站主(2026-10-26);**不要改放進 blocked_paths**——站主按下載 CSV/ZIP 時 Gradio 要先把 exports/ 的檔複製進快取,blocked 會連站主一起擋 |
 
 ## 坑(都實際踩過)
 - **tunnel 是共用的**:scopelab 沒有自己的 tunnel,掛在共用的 `tinghaochang-sites`(原名 clinscope)上(config.yml 多一條 ingress)。
@@ -43,5 +43,7 @@ Cloudflare Access(Google 登入)擋。**本機是真正在跑的地方,Cloudflar
 - **Access 只綁單一主機名**:`scopelab` app 只保護 `scopelab.tinghaochang.com`。
 - **新版 Zero Trust UI 建 Access app**(2026-07 實測):Add an application → **Self-hosted and private** → 子分頁選 **Public DNS**(⚠️ 不是預設的 *Private destinations*——那是 WARP 私網、方向錯)→ Continue。設定頁要填三塊才能按 Create:**Destinations**(Public hostname:Subdomain=`scopelab` / Domain=`tinghaochang.com` / Path 空)、**Identity providers**(勾現有 Google、Accept-all 關)、**Access policies**(Policy Name **必填**否則紅字 "required" 擋住、Action=Allow、Include=Everyone)。上方 Preview 三格(SOURCES/POLICIES/DESTINATIONS)是即時摘要,DESTINATIONS 與 POLICIES 不能是空的。建好後回 Applications 清單會與 clinscope 並排(gis 走 in-app OAuth、不在此清單)。
 - **detached vs 背景任務**:run_in_background 起的 server 會隨 session 結束被砍;要常駐請走 `.vbs`(wscript)。
+- **Startup 資料夾的 vbs 要跟 repo 版同步**(2026-10-26 抓到):Startup 那份是複製過去的,repo 的 `packaging/autostart/scopelab_public.vbs` 改了不會自己跟上。06-30 的舊版沒有 `call env.local.bat` ⇒ 重開機後站照樣起來、但沒有 Google 登入(`/auth/google` 404),站主無法操作,看起來一切正常。改 repo 版後要 `cmp` 兩份、不同就覆蓋;驗法:重啟後 `POST /auth/google` 回 401(有登入)而不是 404。
+- **驗證檔案服務用 `/gradio_api/file=<絕對路徑 URL 編碼>`**:匿名對 `exports/*.csv`、`projects/*/runs/*/best.pt` 要 403,大寫 `EXPORTS`、`..` 繞路也要 403;`samples/*.png` 要 200(標註畫面的圖)。
 - **ScopeLab 不像 ClinScope 有雲端權重**:沒有 weights manifest / HF 下載這層,公開站直接跑 repo;故無「選模型才下載」橫幅。
 - **公開站的「選資料夾」原生對話框開在伺服器端、訓練吃本機 GPU** → 遠端訪客只能看 UI/範例,真正能用的是下載安裝版。
