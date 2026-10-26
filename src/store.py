@@ -62,7 +62,20 @@ def unique_slug(name: str) -> str:
     return slug
 
 
+def _assert_safe_slug(slug: str) -> None:
+    """縱深防禦：slug 一律是 slugify 產物（只含 \\w 與 CJK，無分隔符）。拒絕任何帶路徑
+    分隔符 / 磁碟代號 / .. 段 / 絕對路徑的值，避免 delete/save 等直接吃到外部傳入的 slug
+    而逸出 projects/。"""
+    s = str(slug or "")
+    if not s:
+        return
+    if (any(sep in s for sep in ("/", "\\")) or ":" in s
+            or ".." in s.split("/") or ".." in s.split("\\") or s in (".", "..")):
+        raise ValueError(f"非法專案代號：{slug!r}")
+
+
 def project_dir(slug: str) -> Path:
+    _assert_safe_slug(slug)
     return PROJECTS / slug
 
 
