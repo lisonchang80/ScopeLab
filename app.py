@@ -1580,6 +1580,8 @@ def build():
             local_chk.change(_toggle_local, local_chk, OWNER_BTNS)
             if auth.AUTH_ENABLED:
                 demo.load(None, None, None, js=auth.AUTH_JS)   # 站內 Google 登入（登入/登出鈕 + GSI）
+    # 佇列上限：避免大量請求把 backlog 無限堆高（GPU 事件另有 concurrency_id="gpu" 限 1）。
+    demo.queue(max_size=int(os.environ.get("SCOPELAB_QUEUE_MAX", "64") or 64))
     return demo
 
 
