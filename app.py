@@ -493,7 +493,8 @@ def on_bridge(payload, S, request: gr.Request = None):
 
     if a == "editor_save":
         f = obj.get("path") or S.get("selected")
-        if not f:
+        # path 來自前端，只接受本專案已載入的影像；其他路徑一律忽略（不預覽、不寫進 labels.json）
+        if not f or f not in S.get("files", []):
             return _noop(S)
         img = obj.get("img")
         locked = auth.public_locked(request)   # 訪客：不寫 edited/*.png，框只留在本分頁 session
