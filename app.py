@@ -1583,31 +1583,67 @@ def build():
     return demo
 
 
-def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **ov):
+def _file_access_paths():
+    """算出 Gradio /gradio_api/file= 的 (allowed_paths, blocked_paths)。
+
+    安全要點：
+    - 公開站沒設 SCOPELAB_ALLOWED_PATHS 時，預設只服務專案/範例資料夾，**絕不**整顆磁碟
+      （原本預設 C:\\ D:\\… 會把整台機器的檔案開放給匿名訪客）。桌面/開發才沿用磁碟根，
+      因為桌面版要能顯示使用者在任意位置挑選的影像。
+    - 下載桌面版只需那一個 .exe → 只允許該檔本身，而非整個 packaging/dist 目錄。
+    - blocked_paths 優先於 allowed_paths：擋掉落在 allowed 內的敏感檔
+      （.git、含祕密的 env.local.bat、記錄訪客 email 的 identity_debug.log）。
+    """
+    root = Path(__file__).resolve().parent
     env_paths = os.environ.get("SCOPELAB_ALLOWED_PATHS", "").strip()
     if env_paths:
         allowed = [p.strip() for p in env_paths.split(";") if p.strip() and Path(p.strip()).exists()]
+    elif store.PUBLIC:
+        # 公開站 fail-safe 預設：只開放資料/範例夾，不開放整顆磁碟。
+        cand = [store.DATA_ROOT, store.PROJECTS, root / "samples", root / "static"]
+        allowed = [str(p) for p in cand if Path(p).exists()]
     else:
         allowed = [f"{d}:\\" for d in "CDEFGHIJKLMNOPQRSTUVWXYZ" if Path(f"{d}:\\").exists()]
-    # 確保「下載桌面版」按鈕能透過 /gradio_api/file= 取得安裝檔（不論 allowed env 怎麼設）
-    _dist = str(Path(__file__).resolve().parent / "packaging" / "dist")
-    if Path(_dist).exists() and _dist not in allowed:
-        allowed.append(_dist)
+
+    # 下載桌面版：只允許那一個安裝檔，不開放整個 dist 目錄（內含整包 onedir）。
+    _exe = root / "packaging" / "dist" / "ScopeLab-Setup.exe"
+    if _exe.exists() and str(_exe) not in allowed:
+        allowed.append(str(_exe))
+
+    # 擋掉落在 allowed 內、絕不可對外的檔／目錄（blocked 優先於 allowed）。
+    blocked = [
+        str(root / ".git"),
+        str(root / "packaging" / "autostart" / "env.local.bat"),
+        str(root / "identity_debug.log"),
+        str(store.DATA_ROOT / "identity_debug.log"),
+    ]
+    return allowed, blocked
+
+
+def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **ov):
+    allowed, blocked = _file_access_paths()
+    # 匿名上傳會往伺服器暫存夾寫檔（吃本機硬碟）；公開站限制單檔大小並定期清快取。
+    max_file_size = os.environ.get("SCOPELAB_MAX_UPLOAD_MB")
+    max_file_size = f"{int(max_file_size)}mb" if (max_file_size or "").strip().isdigit() else ("25mb" if store.PUBLIC else None)
+    delete_cache = (1800, 1800) if store.PUBLIC else None
     _u, _p = os.environ.get("SCOPELAB_AUTH_USER"), os.environ.get("SCOPELAB_AUTH_PASS")
     basic_auth = (_u, _p) if (_u and _p) else None
     port = int(server_port or os.environ.get("SCOPELAB_PORT", 7861) or 7861)
     print(f"[ScopeLab] {len(store.list_projects())} projects | allowed_paths={allowed} | "
-          f"basic_auth={'on' if basic_auth else 'off'} | "
+          f"blocked={len(blocked)} | basic_auth={'on' if basic_auth else 'off'} | "
           f"mode={'PUBLIC' if store.PUBLIC else 'local'} | "
           f"google-login={'ON' if auth.AUTH_ENABLED else 'off'}")
     demo = build()
+    demo.delete_cache = delete_cache     # mount_gradio_app 不收 delete_cache，設在 Blocks 上
     if auth.AUTH_ENABLED:
         # 站內 Google 登入：掛自訂 /auth/* 路由到 Gradio 底層 FastAPI，再用 uvicorn 起（127.0.0.1，經 tunnel）。
         import uvicorn
         from fastapi import FastAPI
         fastapi_app = FastAPI()
         auth.add_auth_routes(fastapi_app)
+        auth.add_upload_guard(fastapi_app)   # 公開站：非站主不得 POST /gradio_api/upload（防匿名塞爆硬碟）
         mounted = gr.mount_gradio_app(fastapi_app, demo, path="/", allowed_paths=allowed,
+                                      blocked_paths=blocked, max_file_size=max_file_size,
                                       theme=THEME, css=CSS, show_error=True)
         server = uvicorn.Server(uvicorn.Config(mounted, host="127.0.0.1", port=port, log_level="warning"))
         if prevent_thread_lock:
@@ -1616,8 +1652,11 @@ def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **o
             return mounted
         server.run()
         return mounted
-    kw = dict(theme=THEME, css=CSS, allowed_paths=allowed,
+    kw = dict(theme=THEME, css=CSS, allowed_paths=allowed, blocked_paths=blocked,
+              delete_cache=delete_cache,
               prevent_thread_lock=prevent_thread_lock, inbrowser=inbrowser)
+    if max_file_size:
+        kw["max_file_size"] = max_file_size
     if basic_auth:
         kw["auth"] = basic_auth
     if server_port:

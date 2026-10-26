@@ -235,6 +235,21 @@ def add_auth_routes(fastapi_app):
         return resp
 
 
+def add_upload_guard(fastapi_app):
+    """公開站：非站主不得 POST 到 Gradio 的檔案上傳端點。
+    ScopeLab 沒有任何上傳輸入元件（影像走伺服器端原生選夾），但 /gradio_api/upload 端點
+    仍開著——匿名訪客可往伺服器暫存夾塞檔塞爆硬碟。站主（本地模式）照常。"""
+    from starlette.responses import JSONResponse
+
+    @fastapi_app.middleware("http")
+    async def _guard_upload(request, call_next):
+        path = request.url.path.rstrip("/")
+        if request.method == "POST" and path.endswith("/upload") and "gradio_api" in path:
+            if public_locked(request):
+                return JSONResponse({"error": "僅站主可上傳（您目前為訪客／唯讀）。"}, status_code=403)
+        return await call_next(request)
+
+
 def identity_bar(request: gr.Request):
     """載入時判定身分 → 回 (身分列HTML, 本地模式checkbox 更新)。公開站專用。
     站主一登入即自動開「本地模式」→ 限制立即解除（免再手動勾）；可再手動取消以預覽訪客。"""
