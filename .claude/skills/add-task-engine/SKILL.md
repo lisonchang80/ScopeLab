@@ -43,7 +43,7 @@ cls→`predictor.load_model`(重建 ResNet、`weights_only=False`)+`predict`(sof
 ## 4. 跨分頁接線（app.py）
 
 - `with gr.Tabs() as tabs:`，每個 `gr.Tab(..., id="label"/"train"/"infer")`。
-- `build_train_tab()` 回 `(proj_dd, recipe_radio, infer_jump_btn, last_run)`；`build_infer_tab()` 回 `(proj_dd, run_dd)`（建頁函式在 Blocks context 內，回傳元件給 app 接線）。
+- `build_train_tab()` 回 6 個 `(proj_dd, recipe_radio, infer_jump_btn, last_run, train_btn, detect_btn)`；`build_infer_tab()` 回 7 個 `(proj_dd, run_dd, pick_btn, infer_btn, single_btn, save_btn, csv_btn)`（建頁函式在 Blocks context 內，回傳元件給 app 接線）。前面是跨頁接線用的元件，後面多出來的動作鈕給公開站訪客虛化（app.py 的 `OWNER_BTNS`）；新任務若加動作鈕，回傳元組、app.py 的拆包與 `OWNER_BTNS` 要一起改。
 - 跨頁跳轉：handler 回 `gr.update(selected="train")` + 目標頁元件的 `gr.update(choices=..., value=...)`。設另一頁 dropdown 值**不會**觸發它的 .change → 要在同一 handler 一起把連動項（如配方/識別卡）也設好。
 - 訓練 generator 要帶出結果給「用此模型推論」：on_train 多兩個輸出（`infer_jump_btn` 解鎖、`last_run` State 寫 `{slug,weights}`），**每個 yield 的 tuple 元素數要等於 outputs 清單長度**（cls/det 共用，現為 7）。
 - 兩頁的專案下拉都有 build-time 凍結 → 各放一顆 🔄 刷新鈕（`_all_projects()` 重讀磁碟）。

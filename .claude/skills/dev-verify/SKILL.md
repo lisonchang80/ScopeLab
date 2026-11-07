@@ -69,7 +69,7 @@ print("BUILD OK:", type(app.build()).__name__)   # ★ 最強結構檢查（見�
 ```
 
 要點：
-- **`app.build()` 是最強的結構驗證**：整棵元件樹＋跨頁元件解包（`build_train_tab` 回 4 / `build_infer_tab` 回 2）＋所有 `.click/.change/.load` 接線都得建得起來才會過。改版面/分頁/跨頁接線後先跑這個。（但 build() **不**會跑 generator → yield tuple 長度 vs outputs 長度的不一致只在執行期才爆，要靠肉眼核對或 headless 跑 trainer。）
+- **`app.build()` 是最強的結構驗證**：整棵元件樹＋跨頁元件解包（`build_train_tab` 回 6 / `build_infer_tab` 回 7，多出來的是給公開站虛化用的動作鈕）＋所有 `.click/.change/.load` 接線都得建得起來才會過。改版面/分頁/跨頁接線後先跑這個。（但 build() **不**會跑 generator → yield tuple 長度 vs outputs 長度的不一致只在執行期才爆，要靠肉眼核對或 headless 跑 trainer。）
 - **cp950 主控台**印中文會 `UnicodeEncodeError` → 測試腳本開頭 `sys.stdout.reconfigure(encoding="utf-8")`、或 `$env:PYTHONIOENCODING="utf-8"`。**piped heredoc 的中文字會被 PowerShell ASCII pipeline 轉成 `?`** → 測試含中文字面值時改用 Write 出 UTF-8 暫存 .py 再 `& $py file.py`，跑完刪。
 - `gr.Info/gr.Error` 在無 request context 下呼叫可能丟錯，但**動作（存檔/刪除）在它之前已執行**——查檔案系統確認結果即可。
 - 接線數量核對：`*PV`/`*R4`/`*FORM` 展開後逐項加總，要跟 handler `return` 的元素數一致（preview_bundle 末位含 assign_dd，共 4）。
@@ -77,6 +77,6 @@ print("BUILD OK:", type(app.build()).__name__)   # ★ 最強結構檢查（見�
 ## 4. demo 資料是執行階段會被寫回的
 
 `projects/*/`（card.json 隨存基本資料、labels.json 隨分類/畫框）測試後 git 會變髒；
-非示範的測試專案（slugify 全中文→`proj`、或 `測試1`→`1` 等）要在結帳前清掉，別 commit 進去。
+非示範的測試專案要在結帳前清掉，別 commit 進去。slugify 保留中文，測試專案會以中文名稱出現在 projects/（例如 `偵測測試專案`、`分類測試專案`）；全空或純符號的名稱才退回 `proj`。
 重生兩個示範：`python samples/make_samples.py`（分類 shapes_demo 單形狀、偵測 shapes_det_demo 多形狀多框）。
 改共用畫圖函式注意**別動到分類示範的圖**（random 呼叫順序要保持「先 color 再 margin」才位元一致）。
