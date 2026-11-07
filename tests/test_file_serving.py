@@ -8,10 +8,14 @@ from conftest import OWNER, ROOT, owner_cookies
 from src import store
 
 
-def _file_url(abs_path):
+def _file_url(abs_path, prefix="/gradio_api/file="):
     from urllib.parse import quote
     from pathlib import Path
-    return "/gradio_api/file=" + quote(Path(abs_path).resolve().as_posix())
+    return prefix + quote(Path(abs_path).resolve().as_posix())
+
+
+# Gradio 有兩個檔案路由字首：file= 與舊版相容的 file/（同一個 file_fetch）。只測 file= 會漏掉繞道（審查 SL-1）
+PREFIXES = ["/gradio_api/file=", "/gradio_api/file/"]
 
 
 # ---- 敏感檔不得被服務（blocked_paths 優先） ------------------------------------
@@ -22,19 +26,17 @@ def test_git_dir_blocked(server, rel):
     assert r.status_code == 403, rel
 
 
-def test_env_local_and_idlog_blocked(server, tmp_path, monkeypatch):
-    # 這些檔在正式站存在且含祕密；測試環境造一個臨時 env.local.bat 驗證它落在 blocked 內。
+def test_env_local_and_idlog_blocked(server):
+    # 這些檔在正式站存在且含祕密：落在 blocked 內。不在 repo 裡建假檔（測試絕不寫真的 repo，審查 SL-2）；
+    # 這台機器上真的有 env.local.bat 時，順便確認伺服器真的回 403。
     envf = ROOT / "packaging" / "autostart" / "env.local.bat"
-    created = False
-    if not envf.exists():
-        envf.write_text("set SECRET=x\n"); created = True
-    try:
+    _, blocked = app._file_access_paths()
+    assert str(envf) in blocked
+    assert any(b.endswith("identity_debug.log") for b in blocked)
+    if envf.exists():
         with server.client() as c:
-            r = c.get(_file_url(envf))
-        assert r.status_code == 403
-    finally:
-        if created:
-            envf.unlink()
+            for prefix in PREFIXES:
+                assert c.get(_file_url(envf, prefix)).status_code == 403, prefix
 
 
 # ---- 正常檔仍可服務（沒有過度封鎖） --------------------------------------------
@@ -56,14 +58,16 @@ def _private_files():
     return exp, pt
 
 
-def test_exports_and_weights_blocked_for_anonymous(server):
+@pytest.mark.parametrize("prefix", PREFIXES)
+def test_exports_and_weights_blocked_for_anonymous(server, prefix):
     exp, pt = _private_files()
     with server.client() as c:
         for p in (exp, pt):
-            assert c.get(_file_url(p)).status_code == 403, p
+            assert c.get(_file_url(p, prefix)).status_code == 403, p
 
 
-def test_private_files_blocked_via_dotdot_and_case(server):
+@pytest.mark.parametrize("prefix", PREFIXES)
+def test_private_files_blocked_via_dotdot_and_case(server, prefix):
     exp, pt = _private_files()
     from urllib.parse import quote
     sneaky = [
@@ -72,14 +76,23 @@ def test_private_files_blocked_via_dotdot_and_case(server):
     ]
     with server.client() as c:
         for s in sneaky:
-            assert c.get("/gradio_api/file=" + quote(s.replace("\\", "/"))).status_code == 403, s
+            assert c.get(prefix + quote(s.replace("\\", "/"))).status_code == 403, s
 
 
-def test_owner_can_still_fetch_private_files(server):
+@pytest.mark.parametrize("prefix", PREFIXES)
+def test_owner_can_still_fetch_private_files(server, prefix):
     exp, pt = _private_files()
     with server.client(cookies=owner_cookies()) as c:
         for p in (exp, pt):
-            assert c.get(_file_url(p)).status_code == 200, p
+            assert c.get(_file_url(p, prefix)).status_code == 200, p
+
+
+def test_legacy_file_route_closed_for_anonymous(server):
+    # 舊路由本站不用：非站主連一般範例圖都不給（以後 Gradio 再加別名也不會漏）；file= 照常
+    img = next((ROOT / "samples" / "shapes").glob("*.png"))
+    with server.client() as c:
+        assert c.get(_file_url(img, "/gradio_api/file/")).status_code == 403
+        assert c.get(_file_url(img)).status_code == 200
 
 
 def test_labeling_images_still_served_to_anonymous(server):
@@ -110,20 +123,21 @@ def test_public_default_paths_are_scoped(monkeypatch):
 
 
 def test_exe_exact_path_not_whole_dist(monkeypatch, tmp_path):
-    dist = ROOT / "packaging" / "dist"
+    # 假安裝檔放暫存夾：以前直接寫 ROOT/packaging/dist/ScopeLab-Setup.exe 再刪，跑一次測試就把真的安裝檔（313 MB、
+    # 在 .gitignore 裡救不回來）換成 2 bytes 再刪掉，公開站的「下載桌面版」因此消失（審查 SL-2）
+    real = ROOT / "packaging" / "dist" / "ScopeLab-Setup.exe"
+    before = (real.stat().st_size, real.stat().st_mtime_ns) if real.exists() else None
+    dist = tmp_path / "dist"
+    dist.mkdir()
     exe = dist / "ScopeLab-Setup.exe"
-    created_dir = not dist.exists()
-    dist.mkdir(parents=True, exist_ok=True)
     exe.write_bytes(b"MZ")
-    try:
-        monkeypatch.setenv("SCOPELAB_ALLOWED_PATHS", str(ROOT))
-        allowed, _ = app._file_access_paths()
-        assert str(exe) in allowed            # 只允許那一個檔
-        assert str(dist) not in allowed       # 不是整個 dist 目錄
-    finally:
-        exe.unlink()
-        if created_dir:
-            dist.rmdir()
+    monkeypatch.setattr(app, "_SETUP_EXE", exe)
+    monkeypatch.setenv("SCOPELAB_ALLOWED_PATHS", str(ROOT))
+    allowed, _ = app._file_access_paths()
+    assert str(exe) in allowed            # 只允許那一個檔
+    assert str(dist) not in allowed       # 不是整個 dist 目錄
+    after = (real.stat().st_size, real.stat().st_mtime_ns) if real.exists() else None
+    assert after == before                # 真的安裝檔一個位元組都沒動
 
 
 # ---- 匿名上傳被擋、站主可上傳 ---------------------------------------------------

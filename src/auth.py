@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import html as _html
 import os
+import re
 from datetime import datetime
 
 import gradio as gr
@@ -250,8 +251,15 @@ def add_upload_guard(fastapi_app):
         return await call_next(request)
 
 
+# Gradio 的檔案路由有兩個字首：/gradio_api/file=<路徑>，以及舊版相容的 /gradio_api/file/<路徑>
+# （gradio routes.py 的 file_deprecated，最後走同一個 file_fetch）。只認 file= 的話舊路由整個繞過（審查 SL-1）。
+_FILE_ROUTE = re.compile(r"/gradio_api/file(=|/)(.*)$")
+
+
 def add_file_guard(fastapi_app, is_private):
-    """公開站：非站主不得經 /gradio_api/file= 直接抓 is_private(路徑) 為真的檔（匯出結果、訓練權重）。
+    """公開站：非站主不得經 /gradio_api/file=（或舊路由 /gradio_api/file/）直接抓 is_private(路徑) 為真的檔
+    （匯出結果、訓練權重）。舊路由 /gradio_api/file/ 本站網址都不用（前端與下載鈕都是 file=），非站主一律擋，
+    以後 Gradio 再改字首也不會漏。
     不放進 blocked_paths：站主按「下載 CSV／ZIP」時 Gradio 要先把 exports/ 的檔複製進快取，
     blocked 會連站主一起擋。標註畫面的原圖不在這兩類目錄，照常服務。"""
     from urllib.parse import unquote
@@ -259,11 +267,67 @@ def add_file_guard(fastapi_app, is_private):
 
     @fastapi_app.middleware("http")
     async def _guard_file(request, call_next):
-        path = request.url.path
-        i = path.find("/file=")
-        if i >= 0 and public_locked(request) and is_private(unquote(path[i + len("/file="):])):
-            return JSONResponse({"error": "僅站主可下載這個檔案。"}, status_code=403)
+        m = _FILE_ROUTE.search(request.url.path)
+        if m and public_locked(request):
+            if m.group(1) == "/":
+                return JSONResponse({"error": "請改用 /gradio_api/file= 網址。"}, status_code=403)
+            if is_private(unquote(m.group(2))):
+                return JSONResponse({"error": "僅站主可下載這個檔案。"}, status_code=403)
         return await call_next(request)
+
+
+# ── 非公開模式（桌面版／開發）只服務本機（審查 GA-1） ─────────────────────
+# 非 PUBLIC 時人人是站主、allowed_paths 是各磁碟根。這台機器的 cloudflared tunnel 常駐，把 scopelab／clinscope
+# 子網域轉到 localhost:7861／7860：非公開實例只要落在這兩個埠（或任何被 tunnel 轉進來的埠），整顆磁碟與站主權限
+# 就對網路公開。不管埠號，經 tunnel 進來的請求都帶 Cloudflare 標頭、Host 是公開網域 → 一律 403；DNS rebinding 也一併擋掉。
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
+_CF_HEADERS = {b"cf-connecting-ip", b"cf-ray", b"cf-visitor"}
+LOCAL_ONLY_MSG = "這個程式只在本機開放（非公開模式）；公開站請用 SCOPELAB_PUBLIC=1 啟動。"
+
+
+def _host_only(host: str) -> str:
+    """Host 標頭去掉埠號：127.0.0.1:7863 → 127.0.0.1、[::1]:7863 → [::1]。"""
+    host = (host or "").strip().lower()
+    if host.startswith("["):
+        end = host.find("]")
+        rest = host[end + 1:] if end > 0 else "x"
+        # 括號後面只能是結尾或「:埠號」；[::1].evil.example 之類原樣回傳（不算本機）
+        return host[: end + 1] if rest == "" or (rest.startswith(":") and rest[1:].isdigit()) else host
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+def local_request(headers) -> bool:
+    """headers：ASGI scope 的 [(name_bytes, value_bytes), ...]。帶 Cloudflare 標頭或 Host 不是本機就不是本機請求。"""
+    host = ""
+    for name, value in headers:
+        name = name.lower()
+        if name in _CF_HEADERS:
+            return False
+        if name == b"cdn-loop" and b"cloudflare" in value.lower():
+            return False
+        if name == b"host":
+            host = value.decode("latin-1")
+    return _host_only(host) in _LOCAL_HOSTS
+
+
+class LocalOnlyMiddleware:
+    """純 ASGI 中介層：非本機的 http 請求回 403、websocket 直接關；lifespan 照常。只掛在非 PUBLIC 模式。"""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket") and not local_request(scope.get("headers") or []):
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
+                return
+            body = LOCAL_ONLY_MSG.encode("utf-8")
+            await send({"type": "http.response.start", "status": 403,
+                        "headers": [(b"content-type", b"text/plain; charset=utf-8"),
+                                    (b"content-length", str(len(body)).encode())]})
+            await send({"type": "http.response.body", "body": body})
+            return
+        await self.app(scope, receive, send)
 
 
 def identity_bar(request: gr.Request):

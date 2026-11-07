@@ -1608,9 +1608,9 @@ def _file_access_paths():
         allowed = [f"{d}:\\" for d in "CDEFGHIJKLMNOPQRSTUVWXYZ" if Path(f"{d}:\\").exists()]
 
     # 下載桌面版：只允許那一個安裝檔，不開放整個 dist 目錄（內含整包 onedir）。
-    _exe = root / "packaging" / "dist" / "ScopeLab-Setup.exe"
-    if _exe.exists() and str(_exe) not in allowed:
-        allowed.append(str(_exe))
+    # 讀模組常數 _SETUP_EXE（跟 SETUP_DL_URL 同一個），測試才能指到暫存假檔、不碰真的安裝檔（審查 SL-2）。
+    if _SETUP_EXE.exists() and str(_SETUP_EXE) not in allowed:
+        allowed.append(str(_SETUP_EXE))
 
     # 擋掉落在 allowed 內、絕不可對外的檔／目錄（blocked 優先於 allowed）。
     blocked = [
@@ -1677,9 +1677,14 @@ def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **o
             return mounted
         server.run()
         return mounted
+    # delete_cache 已設在 demo 上（Blocks.launch 不收這個參數，傳了會 TypeError，桌面／開發模式整個起不來）
     kw = dict(theme=THEME, css=CSS, allowed_paths=allowed, blocked_paths=blocked,
-              delete_cache=delete_cache,
               prevent_thread_lock=prevent_thread_lock, inbrowser=inbrowser)
+    if not store.PUBLIC:
+        # 桌面／開發：人人是站主、allowed_paths 是各磁碟根 ⇒ 只服務本機，經 tunnel 進來的一律 403（審查 GA-1）。
+        # 這一行要跟上面拿掉 delete_cache 一起上：修好崩潰而沒有這道防線，非公開實例一落在 tunnel 埠就公開整碟。
+        from starlette.middleware import Middleware
+        kw["app_kwargs"] = {"middleware": [Middleware(auth.LocalOnlyMiddleware)]}
     if max_file_size:
         kw["max_file_size"] = max_file_size
     if basic_auth:
@@ -1691,5 +1696,6 @@ def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **o
 
 
 if __name__ == "__main__":
-    # 專用埠 7861，避開 ClinScope 的 7860；可用 SCOPELAB_PORT 覆寫
-    launch_app(server_port=int(os.environ.get("SCOPELAB_PORT", "7861")))
+    # 公開站固定 7861（tunnel 入口，啟動器明確設 SCOPELAB_PORT=7861）；桌面／開發預設 7863，
+    # 不落在 tunnel 的 7860／7861 上（審查 GA-1）。都可用 SCOPELAB_PORT 覆寫
+    launch_app(server_port=int(os.environ.get("SCOPELAB_PORT", "7861" if store.PUBLIC else "7863")))

@@ -1,27 +1,32 @@
 ---
 name: dev-verify
-description: ScopeLab 啟動/重啟與改碼後的驗證流程。觸發詞：啟動/開啟/重啟 ScopeLab、改了 app.py 要重啟、驗證 UI 改動、preview 連不上/截圖逾時。涉及 app.py、src/store.py、samples/make_samples.py，埠 7861，沿用 ClinScope venv。
+description: ScopeLab 啟動/重啟與改碼後的驗證流程。觸發詞：啟動/開啟/重啟 ScopeLab、改了 app.py 要重啟、驗證 UI 改動、preview 連不上/截圖逾時。涉及 app.py、src/store.py、samples/make_samples.py，開發埠 7863（公開站 7861），沿用 ClinScope venv。
 ---
 
 # ScopeLab 開發 / 驗證流程
 
 ScopeLab 是單檔 Gradio（6.17.3）app（`app.py`），沿用 ClinScope 的 venv
-`D:\Claude code\ClinScope\.venv\Scripts\python.exe`，跑埠 **7861**。**Gradio 無熱重載**——改碼一定要重啟程序才生效。
+`D:\Claude code\ClinScope\.venv\Scripts\python.exe`。開發／桌面跑埠 **7863**，公開站跑 **7861**。**Gradio 無熱重載**——改碼一定要重啟程序才生效。
 
-## 1. 常駐啟動（給使用者實際用）
+⚠️ **7860／7861 是 tunnel 的公開入口**（clinscope／scopelab.tinghaochang.com 直接轉到這兩個埠，前面沒有 Access）。
+不帶 `SCOPELAB_PUBLIC=1` 的 `python app.py` 是非公開模式（人人是站主、allowed_paths＝各磁碟根），**絕不能落在這兩個埠**。
+2026-11-07 起非公開模式預設 7863，而且掛了本機限定中介層（帶 Cloudflare 標頭或 Host 不是本機一律 403，審查 GA-1），但埠號照樣不要用錯。
+**重啟公開站一律用 `packagingutostartestart_server.bat` 或 Startup 的 `scopelab_public.vbs`**（會帶 PUBLIC、登入祕密與 allowed_paths），見 public-tunnel skill；下面這段只給本機開發。
+
+## 1. 本機開發用的常駐啟動
 
 ⚠️ **不要用 `preview_start` 當常駐**：preview 開的 server 驗證完會被工具收掉、使用者連不上。
 要常駐必須用獨立背景程序：
 
 ```powershell
-$old = (Get-NetTCPConnection -State Listen -LocalPort 7861 -ErrorAction SilentlyContinue).OwningProcess | Select-Object -Unique
+$old = (Get-NetTCPConnection -State Listen -LocalPort 7863 -ErrorAction SilentlyContinue).OwningProcess | Select-Object -Unique
 foreach ($p in $old) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Milliseconds 700
 $py = "D:\Claude code\ClinScope\.venv\Scripts\python.exe"
 $proc = Start-Process -FilePath $py -ArgumentList "app.py" -WorkingDirectory "D:\Claude code\ScopeLab" -WindowStyle Hidden -PassThru
 # 輪詢就緒
-for ($i=0;$i -lt 25;$i++){ $c=Get-NetTCPConnection -State Listen -LocalPort 7861 -ErrorAction SilentlyContinue
-  if($c){ try{ $r=Invoke-WebRequest "http://127.0.0.1:7861/" -UseBasicParsing -TimeoutSec 5; if($r.StatusCode -eq 200 -and $r.Content -match "ScopeLab"){"READY";break} }catch{} }; Start-Sleep -Milliseconds 800 }
+for ($i=0;$i -lt 25;$i++){ $c=Get-NetTCPConnection -State Listen -LocalPort 7863 -ErrorAction SilentlyContinue
+  if($c){ try{ $r=Invoke-WebRequest "http://127.0.0.1:7863/" -UseBasicParsing -TimeoutSec 5; if($r.StatusCode -eq 200 -and $r.Content -match "ScopeLab"){"READY";break} }catch{} }; Start-Sleep -Milliseconds 800 }
 ```
 
 改碼後重啟＝同一段（先 Stop-Process 該埠的 PID 再重起）。PowerShell 字串裡別用 `$var:`（會被當磁碟機），用 `${var}`。

@@ -8,7 +8,7 @@
 （純 PIL、寫入正確本機路徑，避免打包帶絕對路徑的 demo 到別人機器壞掉）。
 
 環境變數：
-  SCOPELAB_PORT          伺服器埠（預設 7861）
+  SCOPELAB_PORT          伺服器埠（預設 7863；7860／7861 是這台機器 tunnel 的公開入口，開發／桌面不要用）
   SCOPELAB_DATA_DIR      使用者資料根（本啟動器自動設為 %LOCALAPPDATA%\\ScopeLab）
   SCOPELAB_DESKTOP_SMOKE =1 時只驗「伺服器起得來、HTTP 回 200」就結束，不開視窗（供無頭測試）
   SCOPELAB_SMOKE_MARKER  smoke 測試結果寫出路徑（預設 cwd/_smoke_marker.json）
@@ -49,7 +49,7 @@ def _data_dir() -> Path:
 DATA_DIR = _data_dir()
 os.environ.setdefault("SCOPELAB_DATA_DIR", str(DATA_DIR))
 
-PORT = int(os.environ.get("SCOPELAB_PORT", "7861"))
+PORT = int(os.environ.get("SCOPELAB_PORT", "7863"))
 URL = f"http://127.0.0.1:{PORT}"
 SMOKE = os.environ.get("SCOPELAB_DESKTOP_SMOKE") == "1"
 

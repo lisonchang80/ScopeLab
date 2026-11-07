@@ -5,7 +5,8 @@
       "name": "scopelab",
       "runtimeExecutable": "D:\\Claude code\\ClinScope\\.venv\\Scripts\\python.exe",
       "runtimeArgs": ["app.py"],
-      "port": 7861
+      "port": 7863,
+      "env": { "SCOPELAB_PORT": "7863", "PYTHONIOENCODING": "utf-8" }
     }
   ]
 }
