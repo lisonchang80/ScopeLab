@@ -13,7 +13,8 @@ taskkill /IM cloudflared.exe /F >nul 2>&1
 timeout /t 2 /nobreak >nul
 echo Starting fresh shared tunnel on the current network ...
 REM Run by UUID (not name) so renaming the tunnel can never break this script.
-start "Shared Tunnel (tinghaochang-sites)" "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel run e90e134d-5254-4976-8c7e-7e85a21ece98
+REM The UUID is read from the "tunnel:" key of the local config.yml, so it never lands in git (this repo is public).
+start "Shared Tunnel (tinghaochang-sites)" "C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --config "%USERPROFILE%\.cloudflared\config.yml" run
 echo.
 echo Done. Wait ~10s, then reload https://scopelab.tinghaochang.com
 echo (Keep this window open; closing it stops the tunnel for ALL sites.)

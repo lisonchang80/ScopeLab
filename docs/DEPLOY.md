@@ -50,7 +50,7 @@ type _smoke.json                              # {"projects":..,"data_dir":..,"ha
 
 ### 架構
 - 網域 `tinghaochang.com`（Cloudflare Registrar）。
-- **共用** tunnel `tinghaochang-sites`（原名 `clinscope`，2026-07-04 改名；UUID `e90e134d-5254-4976-8c7e-7e85a21ece98`，腳本一律用 UUID 跑）：**一個** cloudflared
+- **共用** tunnel `tinghaochang-sites`（原名 `clinscope`，2026-07-04 改名；腳本一律用 UUID 跑；UUID 只放本機 `~/.cloudflared/config.yml` 的 `tunnel:`，不寫進 repo）：**一個** cloudflared
   程序同時服務 clinscope(7860) + scopelab(7861) + gis(8000) + harnesshub(5178) + 根網域(5180)，ingress 見 `~/.cloudflared/config.yml`。
 - Access app `scopelab` 綁單一主機名 `scopelab.tinghaochang.com`，policy = 任何 Google 帳號
   （沿用 ClinScope 的 Google IdP）。

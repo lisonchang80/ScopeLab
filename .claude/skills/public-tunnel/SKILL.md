@@ -11,7 +11,7 @@ description: 維護/部署 ScopeLab 公開網址 scopelab.tinghaochang.com(Cloud
 
 ## 現況關鍵值
 - 網域 `tinghaochang.com`(Cloudflare Registrar)。
-- **⚠️ tunnel 與 ClinScope 共用**:tunnel 名 `tinghaochang-sites`(原名 `clinscope`,2026-07-04 改名;腳本一律用 UUID 跑)、UUID `e90e134d-5254-4976-8c7e-7e85a21ece98`。
+- **⚠️ tunnel 與 ClinScope 共用**:tunnel 名 `tinghaochang-sites`(原名 `clinscope`,2026-07-04 改名;腳本一律用 UUID 跑)、UUID 只放本機 `~/.cloudflared/config.yml` 的 `tunnel:`(**不寫進 repo**,這個 repo 是公開的)。
   **一個** cloudflared 程序同時服務 clinscope(7860) + scopelab(7861) + gis(8000) + harnesshub(5178) + 根網域 portfolio(5180)。
   重啟 tunnel = 同時影響五個站。
 - Access app `scopelab`,destination=`scopelab.tinghaochang.com`(**單一主機名**);已加 Bypass/Everyone policy(`clinscope-public-bypass`)⇒ 匿名可看、**不再導 Access 登入頁**。
