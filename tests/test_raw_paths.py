@@ -80,8 +80,18 @@ def test_query_fragment_trick_owner_still_served(server, targets, trick, kind):
 
 @pytest.mark.parametrize("trick", [None] + TRICKS)
 def test_public_example_served_to_anonymous(server, targets, trick):
-    status, body = _raw(server, _url("projects/demo/card.json", trick))
+    note = DATA / "projects" / "demo" / "edited" / "demo_note.txt"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text("demo", encoding="utf-8")
+    status, body = _raw(server, _url("projects/demo/edited/demo_note.txt", trick))
     assert status == 200 and b"demo" in body
+
+
+@pytest.mark.parametrize("trick", [None] + TRICKS)
+def test_public_example_card_owner_only(server, targets, trick):
+    """公開範例的 card.json 也只給站主（含本機路徑，審查 GA-4）。"""
+    assert _raw(server, _url("projects/demo/card.json", trick))[0] == 403
+    assert _raw(server, _url("projects/demo/card.json", trick), owner_cookies())[0] == 200
 
 
 def test_old_route_with_trick_blocked(server, targets):

@@ -113,7 +113,8 @@ def test_launch_middleware_order():
     names = [m.cls.__name__ for m in auth.launch_middleware(local_only=True)]
     assert names == ["LocalOnlyMiddleware", "FrameGuard", "SameOriginWriteGuard"]
     names = [m.cls.__name__ for m in auth.launch_middleware(local_only=False)]
-    assert names == ["FrameGuard", "SameOriginWriteGuard", "OwnerOnlyPostBlock"]   # 沒有站主：上傳等端點全擋
+    # 沒有站主：本文上限一律非站主的（審查 GA-12）、上傳等端點全擋
+    assert names == ["FrameGuard", "SameOriginWriteGuard", "BodySizeLimit", "OwnerOnlyPostBlock"]
 
 
 # ---- Secure 時 cookie 改名 __Host-sl_session ----------------------------------------

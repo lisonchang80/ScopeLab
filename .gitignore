@@ -19,3 +19,6 @@ packaging/dist/
 # 公開站祕密與身分紀錄（絕不入版）
 packaging/autostart/env.local.bat
 identity_debug.log
+# 登出作廢清單（審查 GA-9）與它的暫存／壞檔備份
+session_revoked.json
+session_revoked.json.*

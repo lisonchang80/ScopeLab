@@ -242,9 +242,13 @@ def render4(S, locked=False):
     items = gallery_items(S, locked)  # 也會更新 S["page_files"]
     detail = detail_html_str(S, locked)
     show_gallery = S["view"] == "圖示"
+    # 影像格隱藏（「詳細資料」檢視）時只送 visible=False、不帶 value（審查 SL-12）：帶 value 的話 Gradio 每次都把
+    # 整頁每張圖整檔 sha256 一次、第一次還複製進快取，逐張改分類每按一次就重讀整份資料集。
+    # 切回「圖示」時 on_view 走到這裡、show_gallery 為真才送新的 value；選取索引仍以 S["page_files"] 為準（同一次算出）。
+    gal = gr.update(value=items, visible=True) if show_gallery else gr.update(visible=False)
     return (
         gr.update(choices=page_choices(S), value=S["page"]),
-        gr.update(value=items, visible=show_gallery),
+        gal,
         gr.update(value=detail, visible=not show_gallery),
         count_text(S),
     )
@@ -614,11 +618,21 @@ def on_export_confirm(fmt, S, request: gr.Request = None, progress=gr.Progress()
     card["classes"] = S["classes"]
     name = card.get("name")
 
+    # 同名資料夾是另一個專案的匯出（兩個專案同名、slug 不同）：本專案改用帶 slug 的資料夾，不碰別人的（審查 SL-9）
+    other = exporter.other_owner(S["slug"], fmt, name)
+    other_note = ""
+    if other:
+        named = exporter._named_dest(S["slug"], fmt, name)
+        other_note = (f'同名資料夾 <code>{html.escape(named.name)}</code> 是<b>另一個專案</b>'
+                      f'（slug={html.escape(other)}）的匯出，不會動到它；本專案改用 '
+                      f'<code>{html.escape(exporter.dest_for(S["slug"], fmt, name).name)}</code>。<br>')
+
     # 重複匯出：目的地已存在且尚未針對此格式確認 → 先提示，要求再按一次確認
     if exporter.already_exists(S["slug"], fmt, name) and S.get("_ovw_fmt") != fmt:
         S["_ovw_fmt"] = fmt
         dest = exporter.dest_for(S["slug"], fmt, name)
-        warn = (f'⚠️ 已存在舊的匯出 <code>{dest.name}</code>，'
+        warn = (f'⚠️ {other_note}已存在本專案（slug={html.escape(S["slug"])}）舊的匯出 '
+                f'<code>{html.escape(dest.name)}</code>，'
                 '再次匯出會<b>整個覆蓋</b>它（舊內容會被刪除）。<br>確定要覆蓋嗎？')
         return (gr.update(),                          # modal 保持開啟
                 gr.update(),                          # 下載檔不變
@@ -634,7 +648,8 @@ def on_export_confirm(fmt, S, request: gr.Request = None, progress=gr.Progress()
         raise gr.Error(f"匯出失敗：{e}")
     gr.Info(f"✅ 匯出完成：{stats.get('images',0)} 張"
             + (f" · {stats.get('boxes',0)} 框" if "boxes" in stats else "")
-            + f" → {path}")
+            + f" → {path}"
+            + (f"（同名資料夾屬於另一個專案 slug={other}，已改用帶 slug 的資料夾）" if other else ""))
     # ⚠️ gr.File 只能吃「檔案」；資料夾匯出把目錄路徑塞進去會讓前端 File 元件
     #    丟 e.i18n is not a function 整頁凍住。只有 zip 才放下載檔，資料夾不放。
     file_update = (gr.update(value=path, visible=True) if is_zip
@@ -1652,12 +1667,41 @@ def build():
     return demo
 
 
+_HOME_DIR = Path.home()     # 測試的暫存資料夾在 %TEMP%（家目錄底下），conftest 改指到假的家目錄；正式站不動
+
+
+def _unsafe_to_serve(p) -> bool:
+    """公開站不得對外提供的路徑（照 ClinScope _unsafe_to_serve，審查 GA-4）：repo 根（含 .venv-build/、packaging/、
+    src/、權重與日後誤放的 .env／env.local.bat 備份…）與使用者家目錄（.cloudflared 憑證、桌面／下載裡的影像）——
+    本身、其內任何位置、或涵蓋它們的上層（如 D:\\、C:\\）。解析不了就當不安全。"""
+    try:
+        p = Path(p).resolve()
+    except Exception:
+        return True
+    for s in (Path(__file__).resolve().parent, _HOME_DIR):
+        s = s.resolve()
+        if p == s or p.is_relative_to(s) or s.is_relative_to(p):
+            return True
+    return False
+
+
+def _public_default_paths():
+    """公開站固定白名單（審查 GA-4）：專案資料夾（含 edited/ 影像；card.json／labels.json／runs/ 與非公開專案由
+    add_file_guard 只給站主）、範例影像、靜態檔、匯出結果（站主下載 CSV／ZIP 時 Gradio 要能把檔複製進快取，
+    非站主由 add_file_guard 擋）。exports/ 還沒建也先列進來：站主第一次匯出後不用重啟就能下載。"""
+    root = Path(__file__).resolve().parent
+    out = [str(store.PROJECTS), str(store.DATA_ROOT / "exports")]
+    out += [str(p) for p in (root / "samples", root / "static") if p.exists()]
+    return out
+
+
 def _file_access_paths():
     """算出 Gradio /gradio_api/file= 的 (allowed_paths, blocked_paths)。
 
     安全要點：
-    - 公開站沒設 SCOPELAB_ALLOWED_PATHS 時，預設只服務專案/範例資料夾，**絕不**整顆磁碟
-      （原本預設 C:\\ D:\\… 會把整台機器的檔案開放給匿名訪客）。桌面/開發才沿用磁碟根，
+    - 公開站是白名單（審查 GA-4）：_public_default_paths 再加上 SCOPELAB_ALLOWED_PATHS 裡「不涵蓋、也不在
+      repo 根或家目錄內」的項目（_unsafe_to_serve，照 ClinScope）。涵蓋 repo 根的項目（舊 launcher 設的
+      D:\\Claude code\\ScopeLab）剔除並印警告。**絕不**整顆磁碟。桌面/開發才沿用磁碟根（或 env 原樣），
       因為桌面版要能顯示使用者在任意位置挑選的影像。
     - 下載桌面版只需那一個 .exe → 只允許該檔本身，而非整個 packaging/dist 目錄。
     - blocked_paths 優先於 allowed_paths：擋掉落在 allowed 內的敏感檔
@@ -1665,12 +1709,15 @@ def _file_access_paths():
     """
     root = Path(__file__).resolve().parent
     env_paths = os.environ.get("SCOPELAB_ALLOWED_PATHS", "").strip()
-    if env_paths:
-        allowed = [p.strip() for p in env_paths.split(";") if p.strip() and Path(p.strip()).exists()]
-    elif store.PUBLIC:
-        # 公開站 fail-safe 預設：只開放資料/範例夾，不開放整顆磁碟。
-        cand = [store.DATA_ROOT, store.PROJECTS, root / "samples", root / "static"]
-        allowed = [str(p) for p in cand if Path(p).exists()]
+    env_list = [p.strip() for p in env_paths.split(";") if p.strip() and Path(p.strip()).exists()]
+    if store.PUBLIC:
+        allowed = _public_default_paths()
+        dropped = [p for p in env_list if _unsafe_to_serve(p)]
+        if dropped:
+            print(f"[ScopeLab] ⚠ 公開站忽略會曝露 repo 根／家目錄的 SCOPELAB_ALLOWED_PATHS 項目: {dropped}", flush=True)
+        allowed += [p for p in env_list if not _unsafe_to_serve(p) and p not in allowed]
+    elif env_list:
+        allowed = env_list
     else:
         allowed = [f"{d}:\\" for d in "CDEFGHIJKLMNOPQRSTUVWXYZ" if Path(f"{d}:\\").exists()]
 
@@ -1790,6 +1837,10 @@ def _private_norm(path, real: bool) -> bool:
         parts = p[len(projects.rstrip(os.sep)) + 1:].split(os.sep)
         if len(parts) > 1 and parts[1] == os.path.normcase("runs"):
             return True
+        # card.json（source_folder 是本機絕對路徑）與 labels.json（每張影像的本機路徑）後端直接讀，
+        # 瀏覽器從不經 file= 取用：公開範例專案的也只給站主（審查 GA-4）
+        if len(parts) == 2 and parts[1] in (os.path.normcase("card.json"), os.path.normcase("labels.json")):
+            return True
         pdir = projects.rstrip(os.sep) + os.sep + parts[0]
         if not dirs.get(pdir, False):          # 非公開專案，或不是任何專案的資料夾
             return True
@@ -1823,6 +1874,7 @@ def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **o
         auth.add_auth_routes(fastapi_app)
         auth.add_upload_guard(fastapi_app)   # 公開站：非站主不得 POST upload／process_recording 等（防匿名寫檔、起 ffmpeg）
         auth.add_file_guard(fastapi_app, _private_file)   # 公開站：匯出結果與訓練權重只給站主
+        auth.add_body_limit(fastapi_app)     # 請求本文上限：/auth/* 64KB、其他 8MB（站主 100MB），上傳交給 max_file_size（審查 GA-12）
         auth.add_web_guards(fastapi_app)     # 最外層：防框架標頭、拿掉非同源 ACAO／ACAC、非同源寫入 403（審查 GA-3／GA-8）
         # show_error=False：非預期例外內文（常含伺服器路徑）不回給瀏覽器；gr.Error 的訊息照常顯示（審查 GA-10）
         mounted = gr.mount_gradio_app(fastapi_app, demo, path="/", allowed_paths=allowed,

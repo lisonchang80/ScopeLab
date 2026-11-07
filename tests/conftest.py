@@ -34,8 +34,8 @@ os.environ.update({
     "SCOPELAB_SESSION_SECRET": "test-only-session-secret-0123456789abcdef",   # 長度要 ≥32（審查 GA-13）
     "SCOPELAB_DATA_DIR": str(DATA),
     "SCOPELAB_COOKIE_SECURE": "0",
-    # 比照正式站 autostart：允許整個 repo 根 + 合成影像夾。
-    # 正式站的資料根就是 repo 根（exports/、projects/ 都落在 allowed 內）；測試資料根在暫存夾，一併放進來才一樣。
+    # 正式站 autostart 目前仍設整個 repo 根：公開模式會把它剔除（_unsafe_to_serve，審查 GA-4），這裡照樣放進來驗證剔除。
+    # 公開站的固定白名單是 projects/、exports/、samples/、static/；合成影像夾與暫存資料根（放各測試的來源資料夾）另外加。
     "SCOPELAB_ALLOWED_PATHS": f"{ROOT};{IMAGES};{DATA}",
     "GRADIO_TEMP_DIR": str(TMP / "gradio"),
     "GRADIO_ANALYTICS_ENABLED": "False",
@@ -77,6 +77,9 @@ reset_project()
 sys.path.insert(0, str(ROOT))
 import app  # noqa: E402
 from src import auth, store  # noqa: E402
+
+# 暫存夾在 %TEMP%＝家目錄底下：不改的話合成影像夾會被「家目錄不服務」規則剔除。家目錄規則另有測試（test_allowed_paths.py）。
+app._HOME_DIR = TMP / "fake_home"
 
 auth._ID_LOG = TMP / "identity_debug.log"     # 別寫進 repo 根
 

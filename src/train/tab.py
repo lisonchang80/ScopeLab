@@ -92,8 +92,12 @@ def build_train_tab():
         card = store.load_card(slug) or {}
         task = card.get("task", "cls")
         classes = card.get("classes", [])
-        labels = store.load_labels(slug).get("labels", {})
-        files = list(labels.keys())
+        # 納入範圍與影像內容跟「標記」頁匯出一致：來源資料夾目前的影像＋編輯版（審查 SL-5）
+        from . import dataset
+        sc = dataset.training_scope(card, store.load_labels(slug))
+        files, labels, edits = sc["files"], sc["labels"], sc["edits"]
+        if not sc["source_ok"]:
+            raise gr.Error("找不到此專案的來源影像資料夾，請先在「標記」頁重新選擇資料夾。")
         if task == "cls" and len(classes) < 2:
             raise gr.Error("分類專案需至少 2 類。")
         if task == "det" and len(classes) < 1:
@@ -105,12 +109,12 @@ def build_train_tab():
             from . import trainer_det
             E = DET_RECIPES[recipe_key]["epochs"]
             gen = trainer_det.train_det(card.get("name", slug), files, labels, classes,
-                                        recipe_key, dev, str(out_dir))
+                                        recipe_key, dev, str(out_dir), edits=edits)
         else:
             from . import trainer_cls
             E = CLS_RECIPES[recipe_key]["epochs"]
             gen = trainer_cls.train_cls(card.get("name", slug), files, labels, classes,
-                                        recipe_key, dev, str(out_dir))
+                                        recipe_key, dev, str(out_dir), edits=edits)
 
         # 輸出順序：train_btn, infer_jump_btn, last_run, device_html, check_html, eplog_html, result_html
         done, current, eplog, last = set(), "偵測裝置", [], None
@@ -137,7 +141,10 @@ def build_train_tab():
             if ph == "data":
                 done.add("載入資料")
                 current = "建立模型"
-                eplog.append(f"資料：訓練 {ev['n_train']} · 驗證 {ev['n_val']} · {ev['n_classes']} 類")
+                eplog.append(f"資料：訓練 {ev['n_train']} · 驗證 {ev['n_val']} · {ev['n_classes']} 類"
+                             f"（來源資料夾 {len(files)} 張）")
+                if sc["stale"]:
+                    eplog.append(f"⚠️ 來源資料夾以外的舊標記 {sc['stale']} 筆未納入（與匯出一致）")
             elif ph == "model":
                 done.add("建立模型")
                 current = "訓練"

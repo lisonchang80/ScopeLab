@@ -12,50 +12,24 @@ from __future__ import annotations
 
 import json
 import queue
-import random
 import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
 
-import yaml
-
+from .dataset import build_det_dataset
 from .device import gpu_stats, health_warnings
 from .recipes import DET_RECIPES
 
 
-def _build_dataset(files, labels, classes, ds_dir: Path):
-    """把 det labels 寫成 YOLO 資料集；回 (data.yaml 路徑, (n_train, n_val))，不足回 (None, None)。"""
-    items = [(p, labels[p]) for p in files if isinstance(labels.get(p), list) and labels[p]]
-    if len(items) < 2:
-        return None, None
-    random.Random(0).shuffle(items)
-    k = max(1, int(len(items) * 0.2))
-    val, train = items[:k], (items[k:] or items[:k])
-    cidx = {c: i for i, c in enumerate(classes)}
-    for split, group in (("train", train), ("val", val)):
-        imgd = ds_dir / "images" / split
-        lbld = ds_dir / "labels" / split
-        imgd.mkdir(parents=True, exist_ok=True)
-        lbld.mkdir(parents=True, exist_ok=True)
-        for p, boxes in group:
-            shutil.copy2(p, imgd / Path(p).name)
-            lines = []
-            for b in boxes:
-                if b.get("cls") not in cidx:
-                    continue
-                cx, cy = b["x"] + b["w"] / 2, b["y"] + b["h"] / 2
-                lines.append(f"{cidx[b['cls']]} {cx:.6f} {cy:.6f} {b['w']:.6f} {b['h']:.6f}")
-            (lbld / (Path(p).stem + ".txt")).write_text("\n".join(lines), encoding="utf-8")
-    data = {"path": str(ds_dir.resolve()), "train": "images/train", "val": "images/val",
-            "names": {i: c for i, c in enumerate(classes)}}
-    yp = ds_dir / "data.yaml"
-    yp.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    return yp, (len(train), len(val))
+# 建資料集搬到 dataset.py（純檔案處理、不 import torch，可單獨測；審查 SL-5）
+_build_dataset = build_det_dataset
 
 
 def train_det(name, files, labels, classes, recipe_key, device_info, out_dir,
-              should_stop=None, epochs_override=None):
+              should_stop=None, epochs_override=None, edits=None):
+    """edits：labels.json 的影像編輯對映（原圖 → 編輯版）。框是相對編輯後影像存的，
+    所以資料集要複製編輯版（審查 SL-5）。"""
     rc = DET_RECIPES[recipe_key]
     imgsz, model_name = rc["imgsz"], rc["model"]
     epochs = epochs_override or rc["epochs"]
@@ -67,7 +41,7 @@ def train_det(name, files, labels, classes, recipe_key, device_info, out_dir,
     if len(classes) < 1:
         yield {"phase": "error", "msg": "此專案沒有定義類別。"}
         return
-    yp, split = _build_dataset(files, labels, classes, out / "dataset")
+    yp, split = build_det_dataset(files, labels, classes, out / "dataset", edits)
     if yp is None:
         yield {"phase": "error", "msg": "可用偵測標註不足（至少 2 張含框影像）。"}
         return

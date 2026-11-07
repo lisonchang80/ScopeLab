@@ -219,13 +219,36 @@ def _safe_name(s):
     return re.sub(r'[\\/:*?"<>|]+', "_", str(s)).strip() or "未命名"
 
 
-def _export_csv(raw, thr):
-    """把目前結果（含手動切換 / 門檻歸 Null）寫成 CSV → exports/infer_results.csv。"""
-    import csv as _csv
-    task = raw.get("task", "cls"); res = raw.get("res", []); ov = raw.get("ov", {})
+def _stamp():
+    from datetime import datetime
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def _new_output(stem: str, suffix: str = "", is_dir: bool = False) -> Path:
+    """exports/<stem>_<時間戳>[_n]<suffix>：每次都是新的資料夾／檔案，不覆蓋、不刪舊結果（審查 SL-8）。
+    用 mkdir(exist_ok=False)／open("x") 搶名字，同一秒按兩次也不會撞到同一份。"""
     out_dir = store.DATA_ROOT / "exports"
     out_dir.mkdir(parents=True, exist_ok=True)
-    fp = out_dir / "infer_results.csv"
+    base = f"{stem}_{_stamp()}"
+    for i in range(1, 1000):
+        p = out_dir / (f"{base}{suffix}" if i == 1 else f"{base}_{i}{suffix}")
+        try:
+            if is_dir:
+                p.mkdir()
+            else:
+                with open(p, "x"):
+                    pass
+            return p
+        except FileExistsError:
+            continue
+    raise RuntimeError(f"無法建立新的輸出：{out_dir / base}")
+
+
+def _export_csv(raw, thr):
+    """把目前結果（含手動切換 / 門檻歸 Null）寫成 CSV → exports/infer_results_<時間戳>.csv（每次新檔，舊的保留）。"""
+    import csv as _csv
+    task = raw.get("task", "cls"); res = raw.get("res", []); ov = raw.get("ov", {})
+    fp = _new_output("infer_results", ".csv")
     with open(fp, "w", newline="", encoding="utf-8-sig") as f:
         w = _csv.writer(f)
         if task == "det":
@@ -246,25 +269,25 @@ def _export_csv(raw, thr):
 
 
 def _save_sorted(raw, thr):
-    """把影像依最終判定類別複製到 exports/infer_sorted/<類別>/（偵測則依框數分夾）。"""
+    """把影像依最終判定類別複製到 exports/infer_sorted_<時間戳>/<類別>/（偵測則依框數分夾）。
+    每次另存都是新資料夾，上一批結果不動（審查 SL-8）。回 (成功張數, 失敗張數, 目的地, 失敗檔名清單)。"""
     import shutil
     task = raw.get("task", "cls"); res = raw.get("res", []); ov = raw.get("ov", {})
-    dest = store.DATA_ROOT / "exports" / "infer_sorted"
-    if dest.exists():
-        shutil.rmtree(dest, ignore_errors=True)
-    n = 0
+    dest = _new_output("infer_sorted", is_dir=True)
+    ok, failed = 0, []
     for i, r in enumerate(res):
         if task == "cls" and not r.get("ok"):
             continue
         cls = _eff_class(r, thr, ov.get(i)) if task == "cls" else f"{len(r['dets'])}框"
         d = dest / _safe_name(cls)
-        d.mkdir(parents=True, exist_ok=True)
         try:
+            d.mkdir(parents=True, exist_ok=True)
             shutil.copy2(r["path"], d / Path(r["path"]).name)
-            n += 1
-        except Exception:
-            pass
-    return n, str(dest)
+            ok += 1
+        except Exception as e:
+            print(f"[ScopeLab] 另存失敗 {r.get('path')}: {type(e).__name__}: {e}", flush=True)
+            failed.append(Path(str(r.get("path", ""))).name)
+    return ok, len(failed), str(dest), failed
 
 
 def build_infer_tab():
@@ -419,14 +442,14 @@ def build_infer_tab():
 
     def on_csv(raw, thr, request: gr.Request = None):
         from .. import auth
-        if auth.public_locked(request):     # 寫 exports/infer_results.csv：訪客／預覽中一律擋
+        if auth.public_locked(request):     # 寫 exports/infer_results_<時間戳>.csv：訪客／預覽中一律擋
             gr.Warning(auth.locked_msg(request))
             return gr.update(visible=False)
         if not raw.get("res"):
             gr.Warning("請先按「▶ 批次計算」產生結果。")
             return gr.update(visible=False)
         fp = _export_csv(raw, thr)
-        gr.Info("✅ 已匯出 CSV")
+        gr.Info(f"✅ 已匯出 CSV → {Path(fp).name}")
         return gr.update(value=fp, visible=True)
 
     def on_save(raw, thr, request: gr.Request = None):
@@ -437,8 +460,13 @@ def build_infer_tab():
         if not raw.get("res"):
             gr.Warning("請先按「▶ 批次計算」產生結果。")
             return
-        n, dest = _save_sorted(raw, thr)
-        gr.Info(f"💾 已另存 {n} 張 → {dest}")
+        ok, fail, dest, failed = _save_sorted(raw, thr)
+        msg = f"💾 已另存 → {dest}：成功 {ok}／失敗 {fail}"
+        if fail:
+            names = "、".join(failed[:5]) + ("…" if len(failed) > 5 else "")
+            gr.Warning(f"{msg}（複製失敗：{names}）")
+        else:
+            gr.Info(msg)
 
     def on_select(items, evt: gr.SelectData):
         i = evt.index if evt is not None else None

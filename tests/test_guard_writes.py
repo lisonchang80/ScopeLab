@@ -159,12 +159,12 @@ RAW = {"task": "cls", "classes": ["甲"], "ov": {},
 
 def test_csv_rejected_for_guest(server):
     _on_csv(server)(RAW, 0.5, FakeRequest())
-    assert not (DATA / "exports" / "infer_results.csv").exists()
+    assert not list((DATA / "exports").glob("infer_results*.csv"))
 
 
 def test_csv_ok_for_owner(server):
     _on_csv(server)(RAW, 0.5, FakeRequest(cookies=owner_cookies()))
-    assert (DATA / "exports" / "infer_results.csv").is_file()
+    assert list((DATA / "exports").glob("infer_results_*.csv"))     # 每次新檔名（審查 SL-8）
 
 
 def test_desktop_mode_never_locked(monkeypatch):

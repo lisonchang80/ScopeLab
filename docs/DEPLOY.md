@@ -75,6 +75,6 @@ cloudflared tunnel route dns tinghaochang-sites scopelab.tinghaochang.com
 | 502 / 1033（換網路、長閒置、隧道死） | `packaging\autostart\restart_tunnel.bat`（重啟**共用** tunnel，同時救 clinscope/scopelab/gis） |
 | 確認本機健康 | `Get-NetTCPConnection -LocalPort 7861 -State Listen`、`Invoke-WebRequest http://127.0.0.1:7861`（應 200） |
 | 確認 Access 守門 | `curl.exe -s -o NUL -w "%{http_code}" https://scopelab.tinghaochang.com` → **302**=正常導登入 |
-| 收緊檔案曝險 | 公開站設 `SCOPELAB_ALLOWED_PATHS=D:\Claude code\ScopeLab`（只服務專案夾、不曝 C:\Users；autostart 已設） |
+| 收緊檔案曝險 | 公開站固定白名單 `projects/`、`exports/`、`samples/`、`static/`＋安裝檔；`SCOPELAB_ALLOWED_PATHS` 涵蓋 repo 根／家目錄的項目會被剔除（autostart 目前設的 repo 根會印警告後忽略） |
 
 詳見 `.claude/skills/public-tunnel`（維運）與 `.claude/skills/repackage`（重打包）。

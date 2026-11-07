@@ -20,6 +20,8 @@ import shutil
 import stat
 from pathlib import Path
 
+import zipfile
+
 import yaml
 from PIL import Image
 
@@ -48,10 +50,45 @@ def _base(slug: str, name: str | None = None) -> str:
     return b if b and b != "_" else (slug or "export")
 
 
-def dest_for(slug: str, fmt: str, name: str | None = None) -> Path | None:
-    """該 (slug, 格式) 預期輸出的資料夾路徑（不建立）。未知格式回 None。"""
+def _owner_slug(d: Path) -> str | None:
+    """既有匯出（資料夾或同名 .zip）裡 card.json 記的專案 slug；沒有或讀不到回 None。"""
+    try:
+        if d.is_dir():
+            cp = d / "card.json"
+            raw = cp.read_text(encoding="utf-8") if cp.is_file() else None
+        elif Path(str(d) + ".zip").is_file():
+            with zipfile.ZipFile(str(d) + ".zip") as z:
+                raw = z.read("card.json").decode("utf-8") if "card.json" in z.namelist() else None
+        else:
+            raw = None
+        return (json.loads(raw).get("slug") or None) if raw else None
+    except Exception:
+        return None
+
+
+def _named_dest(slug: str, fmt: str, name: str | None) -> Path | None:
     tag = FMT_TAG.get(fmt)
     return (EXPORTS / f"{_base(slug, name)}__{tag}") if tag else None
+
+
+def other_owner(slug: str, fmt: str, name: str | None = None) -> str | None:
+    """以名稱命名的匯出夾若屬於另一個專案（card.json 的 slug 不同），回那個 slug；否則 None（審查 SL-9）。"""
+    d = _named_dest(slug, fmt, name)
+    owner = _owner_slug(d) if d is not None else None
+    return owner if (owner and slug and owner != slug) else None
+
+
+def dest_for(slug: str, fmt: str, name: str | None = None) -> Path | None:
+    """該 (slug, 格式) 預期輸出的資料夾路徑（不建立）。未知格式回 None。
+
+    預設用可讀的專案名稱 <名稱>__<格式>；同名資料夾若是另一個專案（slug 不同，store.unique_slug 允許同名
+    專案共存）的匯出，改用 <名稱>__<slug>__<格式>，不覆蓋別人的匯出（審查 SL-9）。同一個專案維持原名。"""
+    d = _named_dest(slug, fmt, name)
+    if d is None:
+        return None
+    if other_owner(slug, fmt, name):
+        return EXPORTS / f"{_base(slug, name)}__{_safe(slug)}__{FMT_TAG[fmt]}"
+    return d
 
 
 def already_exists(slug: str, fmt: str, name: str | None = None) -> bool:
@@ -83,9 +120,8 @@ def _force_rmtree(path: Path):
             shutil.rmtree(path, onerror=_onerror)
 
 
-def _fresh(base: str, tag: str) -> Path:
+def _fresh(out: Path) -> Path:
     EXPORTS.mkdir(exist_ok=True)
-    out = EXPORTS / f"{base}__{tag}"
     if out.exists():
         _force_rmtree(out)
         if out.exists():
@@ -207,14 +243,17 @@ def export_det_coco(slug, card, files, labels, edits, dest: Path, progress=None)
 
 def run(slug, card, files, labels, edits, fmt, progress=None) -> tuple[str, dict, bool]:
     """回傳 (結果路徑, 統計, 是否為 zip)。"""
-    base = _base(slug, card.get("name"))
+    name = card.get("name")
+    if fmt not in FMT_TAG:
+        raise ValueError(f"未知匯出格式：{fmt}")
+    target = dest_for(slug, fmt, name)          # 與 already_exists／警告文字同一個目的地（審查 SL-9）
     if fmt == "cls_folder":
-        dest = _fresh(base, "imagefolder")
+        dest = _fresh(target)
         stats = export_cls(slug, card, files, labels, edits, dest, progress)
         _write_card(dest, card, stats)
         return str(dest), stats, False
     if fmt == "cls_zip":
-        dest = _fresh(base, "imagefolder")
+        dest = _fresh(target)
         stats = export_cls(slug, card, files, labels, edits, dest, progress)
         _write_card(dest, card, stats)
         if progress:
@@ -222,7 +261,7 @@ def run(slug, card, files, labels, edits, fmt, progress=None) -> tuple[str, dict
         zp = shutil.make_archive(str(dest), "zip", dest)
         return zp, stats, True
     if fmt in ("det_yolo", "det_zip"):
-        dest = _fresh(base, "yolo")
+        dest = _fresh(target)
         stats = export_det_yolo(slug, card, files, labels, edits, dest, progress)
         _write_card(dest, card, stats)
         if fmt == "det_zip":
@@ -231,7 +270,7 @@ def run(slug, card, files, labels, edits, fmt, progress=None) -> tuple[str, dict
             return shutil.make_archive(str(dest), "zip", dest), stats, True
         return str(dest), stats, False
     if fmt == "det_coco":
-        dest = _fresh(base, "coco")
+        dest = _fresh(target)
         stats = export_det_coco(slug, card, files, labels, edits, dest, progress)
         _write_card(dest, card, stats)
         return str(dest), stats, False

@@ -24,6 +24,7 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset
 from torchvision import models
 
+from .dataset import cls_items
 from .device import batch_for, gpu_stats, health_warnings
 from .recipes import RECIPES
 
@@ -64,14 +65,15 @@ def _build_model(arch: str, n: int, pretrained: bool):
     return model, used
 
 
-def train_cls(name, files, labels, classes, recipe_key, device_info, out_dir, should_stop=None):
-    """逐 epoch yield 事件 dict 的訓練 generator。"""
+def train_cls(name, files, labels, classes, recipe_key, device_info, out_dir, should_stop=None,
+              edits=None):
+    """逐 epoch yield 事件 dict 的訓練 generator。
+    edits：影像編輯對映（原圖 → 編輯版）；訓練讀編輯版，與匯出一致（審查 SL-5）。"""
     rc = RECIPES[recipe_key]
     img, epochs, lr, arch, pretrained = rc["img"], rc["epochs"], rc["lr"], rc["arch"], rc["pretrained"]
     dev = torch.device(device_info["device"])
 
-    items = [(p, classes.index(labels[p])) for p in files
-             if isinstance(labels.get(p), str) and labels.get(p) in classes]
+    items = cls_items(files, labels, classes, edits)
     yield {"phase": "setup", "step": f"載入標註：{len(items)} 張可用"}
     if len(items) < 2 or len(classes) < 2:
         yield {"phase": "error", "msg": "可用標註不足（至少 2 類、≥2 張已標影像）。"}

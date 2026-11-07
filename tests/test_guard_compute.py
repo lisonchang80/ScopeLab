@@ -31,7 +31,7 @@ def engines(monkeypatch):
 
     trainer = types.ModuleType("src.train.trainer_cls")
 
-    def train_cls(name, files, labels, classes, recipe, dev, out_dir):
+    def train_cls(name, files, labels, classes, recipe, dev, out_dir, **kw):   # kw：edits（審查 SL-5）
         calls.append("train_cls")
         yield {"phase": "done", "weights": f"{out_dir}/best.pt", "model_card": f"{out_dir}/model_card.json",
                "summary": {"best_val_acc": 1.0, "arch": "stub", "epochs": 1}}
@@ -137,9 +137,9 @@ def test_save_sorted_rejected_for_guest(server):
     on_save = _fn(server, "build_infer_tab.<locals>.on_save")
     raw = {"task": "cls", "res": [{"path": str(IMAGES / "img_0.png"), "ok": True, "top": [("甲", 0.9)]}], "ov": {}}
     on_save(raw, 0.5, FakeRequest())
-    assert not (DATA / "exports" / "infer_sorted").exists()
+    assert not list((DATA / "exports").glob("infer_sorted*"))
     on_save(raw, 0.5, FakeRequest(cookies=owner_cookies()))
-    assert (DATA / "exports" / "infer_sorted").is_dir()
+    assert [p for p in (DATA / "exports").glob("infer_sorted_*") if p.is_dir()]   # 每次新資料夾（審查 SL-8）
 
 
 # ---- 刪除專案 ------------------------------------------------------------------

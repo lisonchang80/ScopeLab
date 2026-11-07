@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import html as _html
+import json
 import os
 import re
+import secrets
+import time
 from datetime import datetime
 
 import gradio as gr
@@ -79,18 +82,125 @@ def _serializer():
     return _SER
 
 
+# ── 登出作廢清單（審查 GA-9，移植 ClinScope app.py 的 sid＋作廢清單，含 CS-9 的 __not_before__ 與壞檔處理） ──
+# 以前登出只請瀏覽器刪 cookie，被複製走的 cookie 值 30 天內照樣是站主。現在每個 cookie 帶隨機 sid，
+# 登出把站主的 sid 記進持久化（git-ignored）的作廢檔，重啟後仍有效；過期項目自動丟棄。
+# 只記站主的 sid（訪客 cookie 本來就沒權限，也避免任何 Google 帳號靠「登入→登出」迴圈灌大）、有上限、
+# 先寫同目錄 tmp 再 os.replace（寫到一半被殺不會留下半個檔）；檔案在但解析失敗 → fail-closed。
+# 沒有 sid 的舊格式 cookie 一律失效（上線後站主要重登一次）。
+_REVOKED_FILE = store.DATA_ROOT / "session_revoked.json"
+_REVOKED_MAX = 1000
+# 作廢檔損毀時＝該次啟動時間：簽發時間早於它的 cookie 一律失效、要重登（否則已登出、可能已外流的站主 cookie
+# 會靜默復活）。0＝不限制（正常情況）。持久化在作廢檔本身的保留鍵 _NOT_BEFORE_KEY（不是 sid、不算進 _REVOKED_MAX），
+# 之後每次重啟都還原；過了 SESSION_MAX_AGE（之前簽發的 cookie 都已自然過期）才丟掉。
+_NOT_BEFORE = 0.0
+_NOT_BEFORE_KEY = "__not_before__"     # sid 是 token_urlsafe(16)（22 字、無底線開頭），不會撞名
+
+
+def _write_revoked(sids, not_before):
+    """作廢檔原子寫入：同目錄 tmp + fsync + os.replace。成功回 True。"""
+    d = dict(sids)
+    if not_before and not_before + SESSION_MAX_AGE > time.time():
+        d[_NOT_BEFORE_KEY] = not_before
+    tmp = _REVOKED_FILE.with_name(_REVOKED_FILE.name + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(json.dumps(d))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, _REVOKED_FILE)
+        return True
+    except Exception as e:
+        print(f"[ScopeLab] ⚠ 登出作廢清單寫入失敗（{type(e).__name__}），本次變更只在記憶體內有效。", flush=True)
+        return False
+
+
+def _load_revoked():
+    """讀作廢檔 → 回 {sid: 到期 epoch}，並把檔內的 not_before（若還沒過期）還原到 _NOT_BEFORE。"""
+    global _NOT_BEFORE
+    now = time.time()
+    try:
+        raw = _REVOKED_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}                                  # 第一次啟動／從沒人登出過
+    except Exception as e:
+        raw, err = None, e
+    else:
+        try:
+            d = json.loads(raw)
+            if not isinstance(d, dict):
+                raise ValueError("not a JSON object")
+            nb = float(d.pop(_NOT_BEFORE_KEY, 0) or 0)
+            sids = {str(k): float(v) for k, v in d.items() if float(v) > now}
+            _NOT_BEFORE = nb if (nb and nb + SESSION_MAX_AGE > now) else 0.0
+            return sids
+        except Exception as e:
+            err = e
+    bad = _REVOKED_FILE.with_name(f"{_REVOKED_FILE.name}.corrupt-{datetime.now():%Y%m%d-%H%M%S}")
+    try:
+        _REVOKED_FILE.replace(bad)
+        renamed = True
+    except Exception:
+        bad, renamed = _REVOKED_FILE, False
+    print(f"[ScopeLab] ⚠ 登出作廢清單讀不出來（{type(err).__name__}），壞檔保留為 {bad.name}；"
+          "本次啟動前簽發的登入 cookie 一律失效，需重新登入。", flush=True)
+    _NOT_BEFORE = now
+    # not_before 寫進新的作廢檔 → 下次重啟（壞檔已改名）仍 fail-closed。新檔寫不進去（例如磁碟滿）就把壞檔搬回原處：
+    # 否則「沒有作廢檔」會被當成正常首次啟動，舊 cookie 在下次重啟復活。改名失敗：壞檔原地留著，下次重啟再走這支。
+    if renamed and not _write_revoked({}, now):
+        try:
+            bad.replace(_REVOKED_FILE)
+        except Exception:
+            pass
+    return {}
+
+
+_REVOKED = _load_revoked()
+
+
+def _save_revoked():
+    _write_revoked(_REVOKED, _NOT_BEFORE)
+
+
 def make_session(email):
-    return _serializer().dumps({"email": email})
+    return _serializer().dumps({"email": email, "sid": secrets.token_urlsafe(16)})
+
+
+def _session_payload(token):
+    """驗簽＋驗期限 → (payload, 簽發時間)；失敗回 (None, None)。"""
+    try:
+        data, ts = _serializer().loads(token, max_age=SESSION_MAX_AGE, return_timestamp=True)
+        return (data, ts) if isinstance(data, dict) else (None, None)
+    except Exception:
+        return None, None
 
 
 def read_session(token):
     if not _secret_ok():        # 公開站沒設安全金鑰：cookie 可被偽造 → 一律不採信（fail-closed）
         return None
-    try:
-        data = _serializer().loads(token, max_age=SESSION_MAX_AGE)
-        return (data.get("email") or "").strip().lower() or None
-    except Exception:
+    data, ts = _session_payload(token)
+    if not data or not data.get("sid") or data["sid"] in _REVOKED:   # 無 sid（舊格式）或已登出 → 失效
         return None
+    if _NOT_BEFORE and ts.timestamp() < _NOT_BEFORE:                  # 作廢檔損毀那次啟動前簽發 → 失效
+        return None
+    return (data.get("email") or "").strip().lower() or None
+
+
+def revoke_session(token):
+    """登出：把站主 cookie 的 sid 記進作廢清單——cookie 值即使被複製走也不能再用（瀏覽器刪 cookie 只是第一層）。
+    非站主的 cookie 沒有任何權限（等同匿名），不記。"""
+    data, ts = _session_payload(token)
+    if not data or not data.get("sid"):
+        return
+    if (data.get("email") or "").strip().lower() != OWNER_EMAIL:
+        return
+    now = time.time()
+    for k in [k for k, exp in _REVOKED.items() if exp <= now]:
+        del _REVOKED[k]
+    _REVOKED[data["sid"]] = ts.timestamp() + SESSION_MAX_AGE
+    while len(_REVOKED) > _REVOKED_MAX:                 # 超過上限：剔除最早到期的
+        del _REVOKED[min(_REVOKED, key=_REVOKED.get)]
+    _save_revoked()
 
 
 def verify_google_credential(credential):
@@ -254,6 +364,7 @@ def add_auth_routes(fastapi_app):
     async def _auth_logout(request: Request):
         if not _same_origin(request):
             return JSONResponse({"error": "cross-origin blocked"}, status_code=403)
+        revoke_session(request.cookies.get(COOKIE_NAME) or "")      # 伺服器端作廢（審查 GA-9）
         resp = JSONResponse({"ok": True})
         # __Host- cookie 的刪除也要帶 Secure 才會被瀏覽器接受；改名前發的舊 sl_session 一併清掉。
         resp.delete_cookie(COOKIE_NAME, path="/", secure=COOKIE_SECURE, httponly=True, samesite="lax")
@@ -509,10 +620,113 @@ class FrameGuard:
         await self.app(scope, receive, send_with_headers)
 
 
+# ── 請求本文上限（審查 GA-12；照 GIS server/security.py 的 BodySizeLimit，改成純 ASGI、chunked 先緩衝再判斷） ──
+# uvicorn 沒有本文上限：/auth/google 未登入就 await request.json()，queue/join 也是匿名可打的 JSON 解析，
+# 匿名者連續送接近 Cloudflare 上限（約 100MB）的本文，同機的 GIS／Portfolio 等站一起被拖慢。
+AUTH_BODY_LIMIT = 64 * 1024              # /auth/*：Google ID token 約 1–2KB
+# queue/join 等其他端點（非站主）：量測（tests/test_body_limit.py 同一套算法）——5,000 筆 Gradio 上傳路徑
+# （%TEMP%\gradio\<sha256>\<檔名>）塞成 JSON 字串再包一層 queue/join：一般檔名 0.78MB、長中文檔名 1.19MB、
+# 124 字中文檔名 2.40MB；8MB 是最壞量測值的 3.3 倍。ScopeLab 沒有上傳元件，非站主的事件本文都只有幾 KB。
+QUEUE_BODY_LIMIT = 8 * 1024 * 1024
+# 站主：影像編輯器「存回」把整張編輯後影像以 PNG dataURL 放進 queue/join（bridge editor_save），
+# 實測 2560x1920 顯微影像一張 9.7–11.5MB（約 2.3MB／百萬像素），8MB 會擋掉站主自己的存檔；
+# 給到 Cloudflare 單次上限 100MB（約 40 百萬像素）。站主由簽章 cookie 判定（只驗 HMAC，不讀本文）。
+OWNER_BODY_LIMIT = 100 * 1024 * 1024
+# 交給 Gradio max_file_size（公開站 25MB）與 add_upload_guard（非站主 403）：不在這裡另設上限
+_BODY_EXEMPT = re.compile(r"/gradio_api/(upload|process_recording)/?$")
+_DRAIN_413_LIMIT = 128 * 1024 * 1024     # 回 413 前讀掉（丟棄、不保留）的上限；另有 _DRAIN_TIMEOUT 時間上限
+
+
+def body_limit(path: str, owner: bool = False):
+    """path 要給 scope["path"]。回位元組上限，None＝不限（交給 Gradio max_file_size）。"""
+    path = path or ""
+    if _BODY_EXEMPT.match(path):
+        return None
+    if path == "/auth" or path.startswith("/auth/"):
+        return AUTH_BODY_LIMIT
+    return OWNER_BODY_LIMIT if owner else QUEUE_BODY_LIMIT
+
+
+async def _send_413(send):
+    body = b'{"error":"request body too large"}'
+    await send({"type": "http.response.start", "status": 413,
+                "headers": [(b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode())]})
+    await send({"type": "http.response.body", "body": body})
+
+
+class BodySizeLimit:
+    """純 ASGI 本文上限（審查 GA-12）。
+    - 有 Content-Length：超過上限（或不是數字）直接 413，不讀進記憶體（只限時丟棄已送來的部分，避免用戶端連線被中止）。
+    - 沒有 Content-Length（chunked）：先邊收邊數，超過上限就 413；沒超過才把緩衝好的本文原樣交給下一層。
+    owner_aware=False（沒開登入的公開站，沒有站主）時一律用非站主上限。"""
+
+    def __init__(self, app, owner_aware: bool = True):
+        self.app = app
+        self.owner_aware = owner_aware
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "") or ""
+        if _BODY_EXEMPT.match(path):
+            await self.app(scope, receive, send)
+            return
+        owner = False
+        if self.owner_aware and not path.startswith("/auth"):
+            try:
+                owner = is_owner(Request(scope))
+            except Exception:
+                owner = False
+        limit = body_limit(path, owner)
+        declared = _hdr(scope, b"content-length")
+        if declared is not None:
+            d = declared.strip()
+            if not d.isdigit() or int(d) > limit:
+                await _drain_body(receive, limit=_DRAIN_413_LIMIT)
+                await _send_413(send)
+                return
+            await self.app(scope, receive, send)      # h11 依 Content-Length 切本文，不會多給
+            return
+        chunks, size, tail = [], 0, None
+        while True:
+            msg = await receive()
+            if msg.get("type") != "http.request":
+                tail = msg                             # http.disconnect：交給下一層自己看到
+                break
+            body = msg.get("body", b"") or b""
+            size += len(body)
+            if size > limit:
+                chunks.clear()
+                if msg.get("more_body"):
+                    await _drain_body(receive, limit=_DRAIN_413_LIMIT)
+                await _send_413(send)
+                return
+            chunks.append(body)
+            if not msg.get("more_body"):
+                break
+        pending = [{"type": "http.request", "body": b"".join(chunks), "more_body": False}]
+        if tail is not None:
+            pending.append(tail)
+
+        async def replay():
+            if pending:
+                return pending.pop(0)
+            return await receive()
+
+        await self.app(scope, replay, send)
+
+
+def add_body_limit(fastapi_app):
+    """站內登入路徑：掛在 SameOriginWriteGuard 裡面、上傳／檔案閘門外面（add_web_guards 之前呼叫）。"""
+    fastapi_app.add_middleware(BodySizeLimit)
+
+
 def add_web_guards(fastapi_app):
     """站內登入路徑（外層 FastAPI 包住掛在 "/" 的 Gradio）：由外到內 FrameGuard → StripCrossOriginCors →
-    SameOriginWriteGuard → 既有的上傳／檔案閘門 → Gradio（含它自己的 CORS）。
-    add_middleware 後加的在外層，所以要在 add_upload_guard／add_file_guard 之後呼叫。"""
+    SameOriginWriteGuard → BodySizeLimit → 既有的上傳／檔案閘門 → Gradio（含它自己的 CORS）。
+    add_middleware 後加的在外層，所以要在 add_upload_guard／add_file_guard／add_body_limit 之後呼叫。"""
     fastapi_app.add_middleware(SameOriginWriteGuard)
     fastapi_app.add_middleware(StripCrossOriginCors)
     fastapi_app.add_middleware(FrameGuard)
@@ -543,6 +757,8 @@ def launch_middleware(local_only: bool):
     mws = [Middleware(LocalOnlyMiddleware)] if local_only else []
     mws += [Middleware(FrameGuard), Middleware(SameOriginWriteGuard)]
     if not local_only:
+        # 沒開登入的公開站沒有站主：本文上限一律用非站主的（審查 GA-12）。桌面／開發只服務本機，不設上限。
+        mws.append(Middleware(BodySizeLimit, owner_aware=False))
         mws.append(Middleware(OwnerOnlyPostBlock))
     return mws
 

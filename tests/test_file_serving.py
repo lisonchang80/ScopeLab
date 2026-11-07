@@ -253,9 +253,24 @@ def test_owner_in_preview_blocked_from_private_project_files(server, private_pro
 
 def test_public_project_files_still_served_to_anonymous(server, private_project):
     from conftest import DATA, IMAGES
+    edited = DATA / "projects" / "demo" / "edited" / "img_0__x.png"
+    edited.parent.mkdir(parents=True, exist_ok=True)
+    edited.write_bytes((IMAGES / "img_0.png").read_bytes())
     with server.client() as c:
-        for f in (DATA / "projects" / "demo" / "card.json", DATA / "projects" / "demo" / "labels.json",
-                  IMAGES / "img_0.png"):
+        for f in (IMAGES / "img_0.png", edited):
+            assert c.get(_file_url(f)).status_code == 200, f
+
+
+def test_public_project_card_and_labels_owner_only(server, private_project):
+    """card.json（source_folder 本機路徑）與 labels.json（影像本機路徑）後端直接讀、瀏覽器從不經 file= 取用：
+    公開範例專案的也只給站主（審查 GA-4）。"""
+    from conftest import DATA
+    files = (DATA / "projects" / "demo" / "card.json", DATA / "projects" / "demo" / "labels.json")
+    with server.client() as c:
+        for f in files:
+            assert c.get(_file_url(f)).status_code == 403, f
+    with server.client(cookies=owner_cookies()) as c:
+        for f in files:
             assert c.get(_file_url(f)).status_code == 200, f
 
 
@@ -264,7 +279,9 @@ def test_private_file_rules(private_project):
     assert app._private_file(str(private_project["card"]))
     assert app._private_file(str(private_project["source"]))
     assert app._private_file(str(DATA / "projects" / "not_a_project" / "x.png"))   # 不屬於任何專案：fail-closed
-    assert not app._private_file(str(DATA / "projects" / "demo" / "card.json"))
+    assert app._private_file(str(DATA / "projects" / "demo" / "card.json"))      # 審查 GA-4
+    assert app._private_file(str(DATA / "projects" / "demo" / "LABELS.JSON"))
+    assert not app._private_file(str(DATA / "projects" / "demo" / "edited" / "a.png"))
     assert not app._private_file(str(IMAGES / "img_0.png"))
 
 

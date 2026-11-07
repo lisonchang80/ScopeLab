@@ -118,8 +118,10 @@ pytest
 - `SCOPELAB_SESSION_SECRET`：**必設**一把隨機長字串（`python -c "import secrets;print(secrets.token_urlsafe(48))"`）。
   沒設則站內 Google 登入自動停用、所有 cookie 不採信（fail-closed，避免被偽造成站主）。
 - `SCOPELAB_GOOGLE_CLIENT_ID`：站內 Google 登入用。
-- `SCOPELAB_ALLOWED_PATHS`：公開站務必設（例 `D:\Claude code\ScopeLab`）。沒設時公開站只服務
-  專案／範例夾（不再預設開放整顆磁碟）。`.git`、`env.local.bat`、`identity_debug.log` 一律擋。
+- `SCOPELAB_ALLOWED_PATHS`：公開站可不設。公開站固定只服務白名單 `projects/`、`exports/`、`samples/`、
+  `static/` 與桌面安裝檔；這個變數只用來**額外**加資料夾，等於、位在其內或涵蓋 repo 根／家目錄的項目
+  一律剔除並印警告（照 ClinScope）。`projects/*/card.json`、`labels.json`、`runs/` 與 `exports/` 只給站主下載；
+  `.git`、`env.local.bat`、`identity_debug.log` 一律擋。
 - `SCOPELAB_TRUST_CF_ACCESS=1`：僅在仍把站擺在 Cloudflare Access 強制登入後才設；Access 改 Bypass
   後務必**不要**設（否則 `cf-access-*` 標頭可被偽造成站主）。
 - `SCOPELAB_FORCE_OWNER`：本機／桌面捷徑，公開站一律忽略（正式站絕不設）。
