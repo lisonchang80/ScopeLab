@@ -1,7 +1,8 @@
 ' ScopeLab public site - logon autostart (server only; hidden, detached).
 ' Starts the ScopeLab Gradio server on 127.0.0.1:7861.
-' The Cloudflare tunnel is SHARED and started by clinscope_public.vbs
-' (one 'clinscope' tunnel serves clinscope + scopelab + gis).
+' The Cloudflare tunnel is SHARED and started by Startup\cloudflared_tunnel.vbs
+' (split out of clinscope_public.vbs on 2026-08-07; one tunnel serves clinscope +
+' scopelab + gis + harnesshub + portfolio). This file never starts it.
 ' NOTE: keep this file PURE ASCII -- a VBS with non-ASCII saved as UTF-8
 ' is mis-parsed by wscript (ANSI) and silently fails to launch.
 Set sh = CreateObject("WScript.Shell")

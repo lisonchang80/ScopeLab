@@ -5,8 +5,8 @@ description: 維護/部署 ScopeLab 公開網址 scopelab.tinghaochang.com(Cloud
 
 # Public Tunnel — ScopeLab 公開站維運
 
-把本機 server(`127.0.0.1:7861`)經 Cloudflare Tunnel 開成 `https://scopelab.tinghaochang.com`,前面用
-Cloudflare Access(Google 登入)擋。**本機是真正在跑的地方,Cloudflare 只是轉送** → 電腦關機 / server
+把本機 server(`127.0.0.1:7861`)經 Cloudflare Tunnel 開成 `https://scopelab.tinghaochang.com`,Access 已改
+**Bypass**(匿名可唯讀瀏覽),登入由站內 Google 登入(app 層,見 `owner-mode` skill)。**本機是真正在跑的地方,Cloudflare 只是轉送** → 電腦關機 / server
 沒跑 / cloudflared 沒跑就連不上。完整架構見 `docs/DEPLOY.md`(Track A);本 skill 給維運速查 + 坑。
 
 ## 現況關鍵值
@@ -14,10 +14,10 @@ Cloudflare Access(Google 登入)擋。**本機是真正在跑的地方,Cloudflar
 - **⚠️ tunnel 與 ClinScope 共用**:tunnel 名 `tinghaochang-sites`(原名 `clinscope`,2026-07-04 改名;腳本一律用 UUID 跑)、UUID `e90e134d-5254-4976-8c7e-7e85a21ece98`。
   **一個** cloudflared 程序同時服務 clinscope(7860) + scopelab(7861) + gis(8000) + harnesshub(5178) + 根網域 portfolio(5180)。
   重啟 tunnel = 同時影響五個站。
-- Access app `scopelab`,destination=`scopelab.tinghaochang.com`(**單一主機名**),policy `任何登入者`=Everyone,
-  登入=**Google OAuth IdP**(沿用 ClinScope 那個,任何 Google 真人可進、擋 bot)。
+- Access app `scopelab`,destination=`scopelab.tinghaochang.com`(**單一主機名**);已加 Bypass/Everyone policy(`clinscope-public-bypass`)⇒ 匿名可看、**不再導 Access 登入頁**。
+  原 `任何登入者` Allow policy 與 Google OAuth IdP(沿用 ClinScope 那個)仍留著、只是被 Bypass 蓋過;移除 bypass policy 即恢復強制登入(可逆)。
 - 公開站跑 **dev venv 的 `python app.py`**(埠 7861)。
-- 開機自啟:`Startup\scopelab_public.vbs`(只起 7861 server;tunnel 由 `clinscope_public.vbs` 起)。
+- 開機自啟:`Startup\scopelab_public.vbs`(只起 7861 server;tunnel 由 `Startup\cloudflared_tunnel.vbs` 起——2026-08-07 自 `clinscope_public.vbs` 拆出獨立自啟,`clinscope_public.vbs` 已退役、不在 Startup)。
 - `cloudflared.exe` 在 `C:\Program Files (x86)\cloudflared\`(無 admin → 不能裝 service,用 Startup .vbs 取代)。
 
 ## 維運速查
@@ -29,7 +29,7 @@ Cloudflare Access(Google 登入)擋。**本機是真正在跑的地方,Cloudflar
 | **手動開公開站(server 部分)** | `packaging\autostart\start_public.bat`(可見視窗,好看 log;只起 7861 server) |
 | **停掉 ScopeLab server** | 工作管理員結束佔 7861 的 `python.exe`;或刪 Startup 的 `scopelab_public.vbs` 取消自啟(不影響 clinscope/gis) |
 | **確認本機健康** | `Get-NetTCPConnection -LocalPort 7861 -State Listen`、`Get-Process cloudflared`、`Invoke-WebRequest http://127.0.0.1:7861`(應 200) |
-| **確認 Access 守門** | `curl.exe -s -o NUL -w "%{http_code}" https://scopelab.tinghaochang.com` → **302**=正常(導向 Access 登入頁);**200 直接進站**=Access 失效要查;**502**=回源斷;**530 + 錯誤 1033**=cloudflared 沒連上(多半 tunnel 死) |
+| **確認公開站健康** | `curl.exe -s -o NUL -w "%{http_code}" https://scopelab.tinghaochang.com` → **200**=正常(Access 已改 Bypass,匿名可看,比照 ClinScope);**502**=回源斷(7861 沒人聽,或 tunnel 卡舊網路);**530 + 錯誤 1033**=cloudflared 沒連上(多半 tunnel 死,啟動 `Startup\cloudflared_tunnel.vbs`);**302 導向 Access 登入頁**=Bypass policy 被移除(重新上鎖,除非有意否則要查) |
 | **改誰能登入** | one.dash.cloudflare.com → Access → Applications → `scopelab` → Policies → 編輯 `任何登入者`:`Everyone`=任何真人 / 改 `Emails` 白名單=限特定人 |
 | **改登入方式** | Access → Applications → `scopelab` → Authentication(關/開 IdP) |
 | **收緊檔案曝險** | 自啟/啟動環境設 `SCOPELAB_ALLOWED_PATHS=D:\Claude code\ScopeLab`(只服務專案夾、不曝 C:\Users;autostart 已設);亦可 `SCOPELAB_AUTH_USER/PASS` 加 Gradio 密碼(Access 已是更強的邊緣驗證)。repo 根裡的 `exports/`、`projects/*/runs/`(推論結果、best.pt)由 `auth.add_file_guard` 只給站主(2026-10-26);**不要改放進 blocked_paths**——站主按下載 CSV/ZIP 時 Gradio 要先把 exports/ 的檔複製進快取,blocked 會連站主一起擋 |
