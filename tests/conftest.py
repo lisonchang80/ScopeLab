@@ -31,7 +31,7 @@ os.environ.update({
     "SCOPELAB_PUBLIC": "1",
     "SCOPELAB_OWNER_EMAIL": OWNER,
     "SCOPELAB_GOOGLE_CLIENT_ID": CLIENT_ID,
-    "SCOPELAB_SESSION_SECRET": "test-only-session-secret",
+    "SCOPELAB_SESSION_SECRET": "test-only-session-secret-0123456789abcdef",   # 長度要 ≥32（審查 GA-13）
     "SCOPELAB_DATA_DIR": str(DATA),
     "SCOPELAB_COOKIE_SECURE": "0",
     # 比照正式站 autostart：允許整個 repo 根 + 合成影像夾。
@@ -51,9 +51,10 @@ def _make_images():
         Image.new("RGB", (32, 32), (40 * i, 80, 160)).save(IMAGES / f"img_{i}.png")
 
 
+# 合成專案標成公開範例（"public": true）：公開站訪客只看得到白名單專案（審查 SL-3）
 CARD = {"slug": SLUG, "name": "合成示範", "discipline": "測試", "task": "cls",
         "classes": ["甲", "乙"], "author": "", "version": "0.1.0", "license": "CC0",
-        "description": "", "source_folder": str(IMAGES),
+        "description": "", "source_folder": str(IMAGES), "public": True,
         "created": "2099-01-01", "updated": "2099-01-01"}
 
 

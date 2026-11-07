@@ -49,3 +49,19 @@ def test_rejects_bad_issuer(fake_google):
 def test_accepts_verified_owner(fake_google):
     info = auth.verify_google_credential("x.y.z")
     assert info["email"] == "owner@example.com"
+
+
+@pytest.mark.parametrize("value", [False, "false", "False", "TRUE", None, "yes", 1, 0, "1"])
+def test_rejects_non_true_email_verified(fake_google, value):
+    """只認布林 True 或字串 "true"；用真值判斷的話 "false"、"yes"、1 都會被當成已驗證（審查 GA-11）。"""
+    claims, _ = fake_google
+    claims["value"] = dict(claims["value"], email_verified=value)
+    with pytest.raises(ValueError):
+        auth.verify_google_credential("x.y.z")
+
+
+@pytest.mark.parametrize("value", [True, "true"])
+def test_accepts_true_email_verified(fake_google, value):
+    claims, _ = fake_google
+    claims["value"] = dict(claims["value"], email_verified=value)
+    assert auth.verify_google_credential("x.y.z")["email"] == "owner@example.com"

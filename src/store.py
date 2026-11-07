@@ -104,15 +104,25 @@ def blank_card(name="新標註專案", task="cls") -> dict:
     }
 
 
-def list_projects() -> list[dict]:
+def is_public(card: dict | None) -> bool:
+    """公開站訪客看得到的專案白名單：card.json 明寫 `"public": true`（內建範例）。
+    沒寫、寫成字串或其他值一律不算（fail-closed）；站主自己建的專案預設不公開（審查 SL-3）。"""
+    return bool(card) and card.get("public") is True
+
+
+def list_projects(public_only: bool = False) -> list[dict]:
+    """public_only=True：只列白名單（is_public）專案，給公開站訪客／站主預覽訪客用。"""
     out = []
     for d in sorted(PROJECTS.iterdir()) if PROJECTS.exists() else []:
         cp = d / "card.json"
         if cp.is_file():
             try:
-                out.append(json.loads(cp.read_text(encoding="utf-8")))
+                card = json.loads(cp.read_text(encoding="utf-8"))
             except Exception:
-                pass
+                continue
+            if public_only and not is_public(card):
+                continue
+            out.append(card)
     out.sort(key=lambda c: c.get("updated", ""), reverse=True)
     return out
 
@@ -126,6 +136,17 @@ def load_card(slug: str) -> dict | None:
     card = blank_card()
     card.update(json.loads(cp.read_text(encoding="utf-8")))
     card["slug"] = slug
+    return card
+
+
+def load_visible_card(slug: str, public_only: bool) -> dict | None:
+    """public_only 時只回白名單專案的 card，其他（含不存在、非法 slug）一律 None。"""
+    try:
+        card = load_card(slug)
+    except ValueError:           # 非法 slug（_assert_safe_slug）
+        return None
+    if public_only and not is_public(card):
+        return None
     return card
 
 

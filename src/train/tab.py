@@ -17,9 +17,11 @@ from .recipes import CLS_RECIPES, DET_RECIPES, DEFAULT_RECIPE, recipe_choices
 _PHASES = ["偵測裝置", "載入資料", "建立模型", "訓練", "產出 model_card"]
 
 
-def _all_projects():
+def _all_projects(request=None):
+    """公開站訪客／站主預覽訪客只列白名單範例（審查 SL-3）；request=None（build 啟動快照）視同訪客。"""
+    from .. import auth
     out = []
-    for c in store.list_projects():
+    for c in store.list_projects(public_only=auth.public_locked(request)):
         tn = "偵測" if c.get("task") == "det" else "分類"
         out.append((f"{c['name']}（{tn}·{len(c.get('classes', []))} 類）", c["slug"]))
     return out
@@ -62,14 +64,20 @@ def build_train_tab():
         result_html = gr.HTML("")
 
     # ---- 事件 ----
-    def on_refresh():
-        return gr.update(choices=_all_projects())
+    def on_refresh(request: gr.Request = None):
+        return gr.update(choices=_all_projects(request))
 
-    def on_proj_change(slug):
-        task = (store.load_card(slug) or {}).get("task", "cls") if slug else "cls"
+    def on_proj_change(slug, request: gr.Request = None):
+        from .. import auth
+        card = store.load_visible_card(slug, auth.public_locked(request)) if slug else None
+        task = (card or {}).get("task", "cls")
         return gr.update(choices=recipe_choices(task), value=DEFAULT_RECIPE)
 
-    def on_detect():
+    def on_detect(request: gr.Request = None):
+        # 公開站訪客不得觸發：import torch＋建 CUDA context 會常駐吃本機 RAM／VRAM，也會洩漏 GPU 型號。
+        from .. import auth
+        if auth.public_locked(request):
+            return "<div class='infobar'>訪客模式不偵測伺服器裝置。</div>"
         from . import device
         d = device.pick_device()
         return f"<div class='infobar'>{device.device_summary(d)}</div>"
@@ -178,5 +186,5 @@ def build_train_tab():
                      device_html, check_html, eplog_html, result_html],
                     concurrency_limit=1, concurrency_id="gpu")
     # 回傳供 app 跨頁接線：標記頁『開始訓練』帶入(proj_dd/recipe_radio)、
-    # 訓練完『用此模型推論』帶出(infer_jump_btn/last_run)；train_btn 供公開站訪客虛化
-    return proj_dd, recipe_radio, infer_jump_btn, last_run, train_btn
+    # 訓練完『用此模型推論』帶出(infer_jump_btn/last_run)；train_btn / detect_btn 供公開站訪客虛化
+    return proj_dd, recipe_radio, infer_jump_btn, last_run, train_btn, detect_btn

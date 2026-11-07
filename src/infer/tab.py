@@ -42,12 +42,29 @@ def _pick_dir():              # 原生資料夾選取器（同 app._native_dir�
         return ""
 
 
-def _all_projects():
+def _all_projects(request=None):
+    """公開站訪客／站主預覽訪客只列白名單範例（審查 SL-3）；request=None（build 啟動快照）視同訪客。"""
+    from .. import auth
     out = []
-    for c in store.list_projects():
+    for c in store.list_projects(public_only=auth.public_locked(request)):
         tn = "偵測" if c.get("task") == "det" else "分類"
         out.append((f"{c['name']}（{tn}·{len(c.get('classes', []))} 類）", c["slug"]))
     return out
+
+
+def _weights_visible(weights, request):
+    """公開站訪客只能看白名單專案 runs/ 底下的 model card（weights 路徑由前端送來，可被竄改）。"""
+    from .. import auth
+    if not auth.public_locked(request):
+        return True
+    try:
+        p = Path(weights).resolve()
+        rel = p.relative_to(store.PROJECTS.resolve())
+    except (OSError, ValueError, RuntimeError):
+        return False
+    parts = rel.parts
+    return (len(parts) >= 3 and parts[1] == "runs"
+            and store.load_visible_card(parts[0], True) is not None)
 
 
 def _runs(slug):
@@ -293,16 +310,24 @@ def build_infer_tab():
             csv_file = gr.File(label="下載 CSV", visible=False)
 
     # ---- 事件 ----
-    def on_proj_change(slug):
+    def on_proj_change(slug, request: gr.Request = None):
+        from .. import auth
+        # 非白名單專案（訪客直接打 API）：不列 run、不給 model card（審查 SL-3）
+        if slug and store.load_visible_card(slug, auth.public_locked(request)) is None:
+            return gr.update(choices=[], value=None), ""
         runs = _runs(slug)
         val = runs[0][1] if runs else None
         return gr.update(choices=runs, value=val), (_card(val) if val else "")
 
-    def on_run_change(weights):
-        return _card(weights) if weights else ""
+    def on_run_change(weights, request: gr.Request = None):
+        if not weights or not _weights_visible(weights, request):
+            return ""
+        return _card(weights)
 
-    def on_refresh(slug):
-        return gr.update(choices=_all_projects()), gr.update(choices=_runs(slug))
+    def on_refresh(slug, request: gr.Request = None):
+        from .. import auth
+        runs = _runs(slug) if (not slug or store.load_visible_card(slug, auth.public_locked(request))) else []
+        return gr.update(choices=_all_projects(request)), gr.update(choices=runs)
 
     def on_view(v):
         return gr.update(visible=(v == "👁 詳細資料"))

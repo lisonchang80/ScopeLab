@@ -114,8 +114,12 @@ def page_choices(S):
     return out
 
 
-def page_files(S):
+def page_files(S, locked=False):
+    """locked（公開站訪客／站主預覽）：略過 allowed_paths 以外的檔（審查 SL-3 縱深）。
+    影像格、詳細表、bridge 的索引都用同一份 page_files，所以過濾要在這裡做，索引才一致。"""
     files, labels, task, page = S["files"], S["labels"], S["task"], S["page"]
+    if locked:
+        files = [f for f in files if _servable(f)]
     if page == TOTAL:
         return list(files)
     if task == "cls":
@@ -141,8 +145,8 @@ def _fsize(path):
         return "—"
 
 
-def gallery_items(S):
-    pf = page_files(S)
+def gallery_items(S, locked=False):
+    pf = page_files(S, locked)
     S["page_files"] = pf
     items = []
     for f in pf:
@@ -164,8 +168,8 @@ def _cls_select(i, cur, classes):
     return f'<select class="ls-cls" data-i="{i}">{"".join(opts)}</select>'
 
 
-def detail_html_str(S):
-    pf = page_files(S)
+def detail_html_str(S, locked=False):
+    pf = page_files(S, locked)
     S["page_files"] = pf
     if not S["files"]:
         return ('<div class="ls-empty-state"><div class="es-ic">🏷️</div>'
@@ -231,10 +235,12 @@ def info_text(S):
     return base
 
 
-def render4(S):
-    """回傳 [page_radio, gallery, detail_html, count_md] 的 update。"""
-    items = gallery_items(S)          # 也會更新 S["page_files"]
-    detail = detail_html_str(S)
+def render4(S, locked=False):
+    """回傳 [page_radio, gallery, detail_html, count_md] 的 update。
+    locked＝auth.public_locked(request)：Gradio 會把影像格的檔案複製進快取再服務、不經 allowed_paths，
+    所以訪客看到的檔要在這裡先篩（審查 SL-3）。"""
+    items = gallery_items(S, locked)  # 也會更新 S["page_files"]
+    detail = detail_html_str(S, locked)
     show_gallery = S["view"] == "圖示"
     return (
         gr.update(choices=page_choices(S), value=S["page"]),
@@ -258,14 +264,21 @@ def assign_update(S):
                      value=(cur or ASSIGN_HINT), interactive=True)
 
 
-def preview_bundle(S, open_editor=False):
-    """回傳 [preview_img, data_box(json), preview_meta, assign_dd]。"""
+def _empty_preview(S):
+    return (gr.update(value=None), gr.update(value="{}"),
+            gr.update(value="選一張影像檢視；點圖可放大編輯。", visible=True),
+            assign_update(S))
+
+
+def preview_bundle(S, open_editor=False, locked=False):
+    """回傳 [preview_img, data_box(json), preview_meta, assign_dd]。
+    locked 時 allowed_paths 以外的檔不預覽：預覽圖是 ndarray，Gradio 存進快取再服務、不經 allowed_paths（審查 SL-3）。"""
     f = S.get("selected")
     if not f:
-        return (gr.update(value=None), gr.update(value="{}"),
-                gr.update(value="選一張影像檢視；點圖可放大編輯。", visible=True),
-                assign_update(S))
+        return _empty_preview(S)
     dp = imaging.display_path(f, S["edits"])
+    if locked and not (_servable(f) and _servable(dp)):
+        return _empty_preview(S)
     if S["task"] == "det":
         boxes = _boxes_of(S["labels"], f)
         img = imaging.draw_boxes(dp, boxes, S["classes"])
@@ -288,18 +301,35 @@ def preview_bundle(S, open_editor=False):
 # ============================================================================
 #  基本資料視窗 handler
 # ============================================================================
-def project_choices():
-    return [(f"{c['name']}（{TASKS.get(c['task'],'')}）", c["slug"]) for c in store.list_projects()]
+def project_choices(request=None):
+    """公開站訪客／站主預覽訪客（auth.public_locked）只列白名單範例（card.json `"public": true`，審查 SL-3）；
+    站主（本地模式）與桌面版列全部。request=None 視同訪客（build() 啟動當下沒有 request → 公開站只放範例）。"""
+    locked = auth.public_locked(request)
+    return [(f"{c['name']}（{TASKS.get(c['task'],'')}）", c["slug"])
+            for c in store.list_projects(public_only=locked)]
 
 
-def on_page_projects(S):
-    """頁面載入時重讀磁碟刷新專案下拉。
+def _slug_visible(slug, request):
+    """slug 是不是這個請求看得到的專案（空 slug＝未存檔的新專案，不在此限）。後端權威閘門，不靠前端下拉。"""
+    if not slug:
+        return True
+    return store.load_visible_card(slug, auth.public_locked(request)) is not None
+
+
+def on_page_projects(S, train_val=None, infer_val=None, request: gr.Request = None):
+    """頁面載入（公開站在 identity_bar 判定身分之後）與切換「本地模式」時，重讀磁碟刷新四個專案下拉。
     Gradio 把元件 choices 凍在 build()（伺服器啟動）當下，session 中新建的專案
-    只靠 gr.update 即時顯示，一旦 F5 重整就退回啟動快照而消失 → 每次載入重抓。"""
-    choices = project_choices()
+    只靠 gr.update 即時顯示，一旦 F5 重整就退回啟動快照而消失 → 每次載入重抓。
+    公開站的啟動快照只有範例（build 時沒有 request），站主的完整清單要靠這裡補上；
+    站主取消本地模式（預覽訪客）時也靠這裡收回成只剩範例。"""
+    choices = project_choices(request)
     vals = [v for _, v in choices]
     cur = S.get("slug") if S.get("slug") in vals else (choices[0][1] if choices else None)
-    return gr.update(choices=choices, value=cur), gr.update(choices=choices, value=None)
+    other = train.tab._all_projects(request)
+    ovals = [v for _, v in other]
+    return (gr.update(choices=choices, value=cur), gr.update(choices=choices, value=None),
+            gr.update(choices=other, value=train_val if train_val in ovals else None),
+            gr.update(choices=other, value=infer_val if infer_val in ovals else None))
 
 
 def _form(card):
@@ -309,19 +339,27 @@ def _form(card):
             card.get("license", ""), card.get("description", ""), cls_txt)
 
 
-def on_proj_change(slug, S):
+def on_proj_change(slug, S, request: gr.Request = None):
     # 按「🆕 新專案」會把專案下拉設成 None，連帶觸發本 change 事件；
     # slug 為空時視同新專案，回空白表單而非去 load_card(None) 崩潰。
-    card = store.load_card(slug) if slug else None
+    locked = auth.public_locked(request)
+    card = store.load_visible_card(slug, False) if slug else None
+    if card and locked and not store.is_public(card):
+        # 訪客直接打 API 指定非白名單專案（審查 SL-3）：回空白表單、清掉 session 裡的影像，什麼都不給
+        S = new_state()
+        return (S, *_form(store.blank_card()), *render4(S, locked), info_text(S),
+                *preview_bundle(S, locked=locked))
     if not card:
-        return (S, *_form(store.blank_card()), *render4(S), info_text(S),
-                *preview_bundle(S))
+        return (S, *_form(store.blank_card()), *render4(S, locked), info_text(S),
+                *preview_bundle(S, locked=locked))
     data = store.load_labels(slug)
     S = new_state(card)
     S["labels"], S["edits"] = data.get("labels", {}), data.get("edits", {})
     if card.get("source_folder") and Path(card["source_folder"]).is_dir():
         S["files"] = store.scan_folder(card["source_folder"])
-    return (S, *_form(card), *render4(S), info_text(S), *preview_bundle(S))
+        if locked:      # 訪客的 session 只放 allowed_paths 內的檔（計數也跟著一致）
+            S["files"] = [f for f in S["files"] if _servable(f)]
+    return (S, *_form(card), *render4(S, locked), info_text(S), *preview_bundle(S, locked=locked))
 
 
 def on_new_project(S):
@@ -355,13 +393,13 @@ def on_save_card(name, disc, task, author, ver, lic, desc, classes_txt, S, reque
     S["slug"], S["name"], S["task"], S["classes"] = card["slug"], card["name"], card["task"], card["classes"]
     persist(S, request)
     gr.Info(f"✅ 已儲存專案「{card['name']}」→ projects/{card['slug']}/")
-    return (S, gr.update(choices=project_choices(), value=card["slug"]),
+    return (S, gr.update(choices=project_choices(request), value=card["slug"]),
             info_text(S), *render4(S), assign_update(S))
 
 
-def on_task_change(task, S):
+def on_task_change(task, S, request: gr.Request = None):
     S["task"], S["page"], S["selected"] = task, TOTAL, None
-    return (S, *render4(S), assign_update(S), info_text(S))
+    return (S, *render4(S, auth.public_locked(request)), assign_update(S), info_text(S))
 
 
 # ============================================================================
@@ -370,7 +408,7 @@ def on_task_change(task, S):
 def on_pick_folder(S, request: gr.Request = None):
     if auth.public_locked(request):
         gr.Warning(auth.locked_msg(request))
-        return (S, *render4(S), *preview_bundle(S), info_text(S))
+        return (S, *render4(S, True), *preview_bundle(S, locked=True), info_text(S))
     path = _native_dir()
     if not path:
         return (S, *render4(S), *preview_bundle(S), info_text(S))
@@ -404,16 +442,17 @@ def _native_dir():
         return ""
 
 
-def on_view(view, S):
+def on_view(view, S, request: gr.Request = None):
     S["view"] = (view or "👁 詳細資料").replace("👁 ", "")
-    return (S, *render4(S))
+    return (S, *render4(S, auth.public_locked(request)))
 
 
-def on_page(page, S):
+def on_page(page, S, request: gr.Request = None):
+    locked = auth.public_locked(request)
     if page == ADDCLASS:               # 「＋」由前端 prompt 處理，後端不切換
-        return (S, *render4(S), *preview_bundle(S))
+        return (S, *render4(S, locked), *preview_bundle(S, locked=locked))
     S["page"], S["selected"] = page, None
-    return (S, *render4(S), *preview_bundle(S))
+    return (S, *render4(S, locked), *preview_bundle(S, locked=locked))
 
 
 def on_assign(cls, S, request: gr.Request = None):
@@ -423,14 +462,16 @@ def on_assign(cls, S, request: gr.Request = None):
     if S["task"] == "cls" and f and cls and cls != ASSIGN_HINT and cls in S["classes"]:
         S["labels"][f] = cls
         persist(S, request)
-    return (S, *render4(S), *preview_bundle(S), info_text(S))
+    locked = auth.public_locked(request)
+    return (S, *render4(S, locked), *preview_bundle(S, locked=locked), info_text(S))
 
 
-def on_gallery_select(S, evt: gr.SelectData):
-    pf = S.get("page_files") or page_files(S)
+def on_gallery_select(S, evt: gr.SelectData, request: gr.Request = None):
+    locked = auth.public_locked(request)
+    pf = S.get("page_files") or page_files(S, locked)
     if evt.index is not None and 0 <= evt.index < len(pf):
         S["selected"] = pf[evt.index]
-    return (S, *preview_bundle(S))
+    return (S, *preview_bundle(S, locked=locked))
 
 
 # ---- bridge：詳細表選列 / 改分類 / 加類別 / 編輯器存回 ----------------------
@@ -448,7 +489,15 @@ def on_bridge(payload, S, request: gr.Request = None):
     except Exception:
         return _noop(S)
     a = obj.get("a")
-    pf = S.get("page_files") or page_files(S)
+    locked = auth.public_locked(request)
+    if not _slug_visible(S.get("slug"), request):
+        # session 裡是訪客看不到的專案（例如站主開著私人專案就切到預覽訪客）：選取回空白預覽，其他動作不做（審查 SL-3）
+        out = list(_noop(S))
+        if a in ("sel", "sel_edit"):
+            pv = _empty_preview(S)
+            out[5], out[6], out[7], out[9] = pv[0], pv[1], pv[2], pv[3]
+        return tuple(out)
+    pf = S.get("page_files") or page_files(S, locked)
 
     def at(i):
         return pf[i] if (i is not None and 0 <= i < len(pf)) else None
@@ -457,7 +506,7 @@ def on_bridge(payload, S, request: gr.Request = None):
         f = at(obj.get("i"))
         if f:
             S["selected"] = f
-        pv = preview_bundle(S, open_editor=(a == "sel_edit"))
+        pv = preview_bundle(S, open_editor=(a == "sel_edit"), locked=locked)
         out = list(_noop(S))
         out[5], out[6], out[7] = pv[0], pv[1], pv[2]   # preview, data, meta
         out[9] = pv[3]                                  # assign_dd 狀態（已選圖 → 啟用）
@@ -473,8 +522,8 @@ def on_bridge(payload, S, request: gr.Request = None):
                 S["labels"].pop(f, None)
             S["selected"] = f
             persist(S, request)
-        r = render4(S)
-        pv = preview_bundle(S)
+        r = render4(S, locked)
+        pv = preview_bundle(S, locked=locked)
         return (S, r[0], r[1], r[2], r[3], pv[0], pv[1], pv[2],
                 gr.update(), pv[3], info_text(S))
 
@@ -486,7 +535,7 @@ def on_bridge(payload, S, request: gr.Request = None):
                 card = store.load_card(S["slug"]) or store.blank_card()
                 card["classes"] = S["classes"]
                 store.save_card(card)
-        r = render4(S)
+        r = render4(S, locked)
         return (S, r[0], r[1], r[2], r[3], gr.update(), gr.update(), gr.update(),
                 gr.update(value="、".join(S["classes"])),
                 assign_update(S), info_text(S))
@@ -497,7 +546,7 @@ def on_bridge(payload, S, request: gr.Request = None):
         if not f or f not in S.get("files", []):
             return _noop(S)
         img = obj.get("img")
-        locked = auth.public_locked(request)   # 訪客：不寫 edited/*.png，框只留在本分頁 session
+        # locked（訪客）：不寫 edited/*.png，框只留在本分頁 session
         if img and not locked:
             if not S.get("slug"):
                 gr.Warning("像素編輯需先儲存專案；本次僅保留標記框。")
@@ -515,8 +564,8 @@ def on_bridge(payload, S, request: gr.Request = None):
         S["selected"] = f
         if persist(S, request):
             gr.Info("💾 已儲存編輯")
-        r = render4(S)
-        pv = preview_bundle(S)
+        r = render4(S, locked)
+        pv = preview_bundle(S, locked=locked)
         return (S, r[0], r[1], r[2], r[3], pv[0], pv[1], pv[2],
                 gr.update(), pv[3], info_text(S))
 
@@ -611,26 +660,26 @@ def on_start_train(S, request: gr.Request = None):
     task = S.get("task", "cls")
     gr.Info(f"🏋 已帶「{S.get('name') or slug}」到訓練分頁")
     return (gr.update(selected="train"),                          # 切換到訓練分頁
-            gr.update(choices=train.tab._all_projects(), value=slug),  # 帶入專案
+            gr.update(choices=train.tab._all_projects(request), value=slug),  # 帶入專案
             gr.update(choices=recipe_choices(task), value=DEFAULT_RECIPE))  # 配方隨任務
 
 
-def on_goto_infer(last_run):
+def on_goto_infer(last_run, request: gr.Request = None):
     """訓練完成後『用此模型推論』：切到推論分頁、帶入該專案與剛訓好的 run。"""
     if not last_run or not last_run.get("weights"):
         raise gr.Error("尚無已訓練的模型，請先在訓練分頁完成一次訓練。")
     slug, weights = last_run["slug"], last_run["weights"]
     gr.Info("🔍 已帶剛訓練的模型到推論分頁")
     return (gr.update(selected="infer"),
-            gr.update(choices=infer.tab._all_projects(), value=slug),
+            gr.update(choices=infer.tab._all_projects(request), value=slug),
             gr.update(choices=infer.tab._runs(slug), value=weights))
 
 
 # ============================================================================
 #  刪除專案
 # ============================================================================
-def on_del_open(S):
-    choices = project_choices()
+def on_del_open(S, request: gr.Request = None):
+    choices = project_choices(request)
     if not choices:
         raise gr.Error("目前沒有任何已儲存的專案可刪除。")
     # 不預選，強迫使用者刻意挑選要刪的專案（破壞性動作）
@@ -638,6 +687,9 @@ def on_del_open(S):
 
 
 def on_del_confirm(del_slug, S, request: gr.Request = None):
+    # 站主取消「本地模式」＝預覽訪客：跟存檔／匯出／訓練一樣擋（審查 SL-6）；guard_owner 留著當第二道
+    if auth.public_locked(request):
+        raise gr.Error(auth.locked_msg(request))
     auth.guard_owner(request)      # 縱深防禦：刪除為破壞性操作，訪客一律擋（UI 也已虛化）
     if not del_slug:
         raise gr.Error("請先選擇要刪除的專案。")
@@ -652,12 +704,12 @@ def on_del_confirm(del_slug, S, request: gr.Request = None):
         # 刪到目前開啟的專案 → 重置成空白新專案
         card = store.blank_card()
         S = new_state(card)
-        return (gr.update(visible=False), gr.update(choices=project_choices(), value=None),
+        return (gr.update(visible=False), gr.update(choices=project_choices(request), value=None),
                 S, *_form(card), *render4(S), info_text(S), *preview_bundle(S))
     # 刪的是其他專案 → 保留目前畫面，只刷新切換下拉
     card = store.load_card(S["slug"]) if S.get("slug") else store.blank_card()
     return (gr.update(visible=False),
-            gr.update(choices=project_choices(), value=S.get("slug") or None),
+            gr.update(choices=project_choices(request), value=S.get("slug") or None),
             S, *_form(card), *render4(S), info_text(S), *preview_bundle(S))
 
 
@@ -1397,6 +1449,8 @@ def build():
         local_chk = gr.Checkbox(False, label="🔓 本地模式（用本機 GPU / 資料夾）", visible=False,
                                 elem_id="sl-local", elem_classes="sl-localchk", container=False)
 
+        # 啟動快照：下拉 choices 會寫進 /config（匿名也讀得到），初始 State 是每個新分頁的起點 ⇒
+        # 一律用 request=None（公開站＝只放白名單範例，審查 SL-3）；站主的完整清單由載入時的 on_page_projects 補上。
         projs = project_choices()
         init_slug = projs[0][1] if projs else ""
         init_card = store.load_card(init_slug) if init_slug else store.blank_card()
@@ -1406,6 +1460,8 @@ def build():
             S0["labels"], S0["edits"] = data.get("labels", {}), data.get("edits", {})
             if init_card.get("source_folder") and Path(init_card["source_folder"]).is_dir():
                 S0["files"] = store.scan_folder(init_card["source_folder"])
+                if auth.public_locked(None):
+                    S0["files"] = [f for f in S0["files"] if _servable(f)]
         else:
             S0 = new_state(init_card)
         S = gr.State(S0)
@@ -1499,7 +1555,8 @@ def build():
 
             with gr.Tab("🏋 訓練", id="train"):
                 (train_proj_dd, train_recipe_radio,
-                 train_infer_btn, train_last_run, train_btn_ref) = train.build_train_tab()
+                 train_infer_btn, train_last_run, train_btn_ref,
+                 train_detect_btn) = train.build_train_tab()
             with gr.Tab("🔍 推論", id="infer"):
                 (infer_proj_dd, infer_run_dd,
                  infer_pick_btn, infer_batch_btn, infer_single_btn,
@@ -1544,17 +1601,24 @@ def build():
         del_ok.click(on_del_confirm, [del_pick, S],
                      [del_modal, proj_dd, S, *FORM, *R4, info_md, *PV])
 
-        # 頁面載入：重讀磁碟刷新專案下拉（避免 F5 後新建專案消失）
-        demo.load(on_page_projects, [S], [proj_dd, del_pick])
+        # 頁面載入：重讀磁碟刷新專案下拉（避免 F5 後新建專案消失）。公開站要等 identity_bar 判定身分、
+        # 站主自動開本地模式之後再跑（否則站主第一次載入會被當成預覽訪客、只看到範例）→ 接在下面 identity_bar 的 .then。
+        PROJ_LISTS_IN = [S, train_proj_dd, infer_proj_dd]
+        PROJ_LISTS_OUT = [proj_dd, del_pick, train_proj_dd, infer_proj_dd]
+        if not store.PUBLIC:
+            demo.load(on_page_projects, PROJ_LISTS_IN, PROJ_LISTS_OUT)
+
         # 初始渲染：讓 gallery / detail 都先掛載，再依檢視模式收起其一
-        demo.load(lambda s: render4(s), [S], R4)
+        def on_load_render(s, request: gr.Request = None):
+            return render4(s, auth.public_locked(request))
+        demo.load(on_load_render, [S], R4)
         demo.load(None, None, None, js=INIT_JS)
         if store.PUBLIC:
             # 訪客把「本機操作」按鈕虛化停用（唯讀）：選資料夾 / 存檔 / 新增 / 刪除 / 匯出 / 訓練 / 推論。
             # 站主一登入即自動開本地模式 → 這些鈕可用；取消勾選 = 預覽訪客（再度虛化+後端擋）。
             # 後端 auth.public_locked / guard_owner 為權威把關，這裡是 UI 提示（虛化勝過隱藏）。
             OWNER_BTNS = [folder_btn, save_card_btn, new_btn, del_btn, export_btn, start_train_btn,
-                          train_btn_ref, infer_pick_btn, infer_batch_btn, infer_single_btn,
+                          train_btn_ref, train_detect_btn, infer_pick_btn, infer_batch_btn, infer_single_btn,
                           infer_save_btn, infer_csv_btn]
 
             def _gate_btns(request: gr.Request):
@@ -1573,11 +1637,14 @@ def build():
                 en = gr.update(interactive=active)
                 return [en] * len(OWNER_BTNS)
 
-            # 公開站：判定身分 → 身分列 + 站主自動開本地模式（checkbox 勾起可見）。
-            demo.load(auth.identity_bar, None, [identity_html, local_chk])
+            # 公開站：判定身分 → 身分列 + 站主自動開本地模式（checkbox 勾起可見）→ 依身分刷新專案下拉。
+            demo.load(auth.identity_bar, None, [identity_html, local_chk]).then(
+                on_page_projects, PROJ_LISTS_IN, PROJ_LISTS_OUT)
             demo.load(None, None, None, js=WEBTOUR_JS)  # 首次進站導覽（訪客 spotlight + 右下 ? 重播鈕）
             demo.load(_gate_btns, None, OWNER_BTNS)
-            local_chk.change(_toggle_local, local_chk, OWNER_BTNS)
+            # 切換本地模式後專案下拉跟著換：預覽訪客只剩範例、勾回來恢復全部（後端各 handler 另有權威檢查）
+            local_chk.change(_toggle_local, local_chk, OWNER_BTNS).then(
+                on_page_projects, PROJ_LISTS_IN, PROJ_LISTS_OUT)
             if auth.AUTH_ENABLED:
                 demo.load(None, None, None, js=auth.AUTH_JS)   # 站內 Google 登入（登入/登出鈕 + GSI）
     # 佇列上限：避免大量請求把 backlog 無限堆高（GPU 事件另有 concurrency_id="gpu" 限 1）。
@@ -1624,28 +1691,117 @@ def _file_access_paths():
     if store.PUBLIC and not auth.AUTH_ENABLED:
         blocked.append(str(store.DATA_ROOT / "exports"))
         blocked += [str(p / "runs") for p in store.PROJECTS.iterdir() if (p / "runs").is_dir()]
+        # 非公開專案（card.json 沒有 "public": true）整個資料夾與它的來源資料夾也擋（審查 SL-3）。
+        # 來源資料夾若包住某個公開專案的來源（巢狀），擋了會連公開範例一起擋 → 跳過（這種情況要開登入走檔案閘門）。
+        dirs, pub_srcs, priv_srcs = _project_privacy()
+        blocked += [d for d, public in dirs.items() if not public]
+        blocked += [src for src in priv_srcs
+                    if not any(_under(ps, src) for ps in pub_srcs)]
     return allowed, blocked
 
 
-def _private_file(path: str) -> bool:
-    """/gradio_api/file= 要的檔是不是匯出結果（exports/）或訓練輸出（projects/<專案>/runs/）。
-    先 realpath 去掉 ..，再 normcase（Windows 不分大小寫，EXPORTS 也算）；解析不了就當私有。"""
+_SERVE_PATHS = None     # launch_app 算好的 (allowed, blocked)；沒經 launch_app（測試直接 build）就現算
+
+
+def _servable(path) -> bool:
+    """這個檔能不能經 /gradio_api/file= 服務（在 allowed_paths 內、不在 blocked_paths 內）。
+    公開站訪客的影像格／預覽圖會被 Gradio 複製進快取再服務、不經 allowed_paths，所以 handler 先用這個篩（審查 SL-3）。
+    先 realpath 去掉 ..，再 normcase；解析不了就當不能服務（fail-closed）。"""
+    global _SERVE_PATHS
+    if _SERVE_PATHS is None:
+        _SERVE_PATHS = _file_access_paths()
+    allowed, blocked = _SERVE_PATHS
     try:
-        p = os.path.normcase(os.path.realpath(path))
-    except (OSError, ValueError):
+        p = os.path.normcase(os.path.realpath(str(path)))
+    except (OSError, ValueError, TypeError):
+        return False
+
+    def under(root):
+        try:
+            r = os.path.normcase(os.path.realpath(root))
+        except (OSError, ValueError):
+            return False
+        return p == r or p.startswith(r.rstrip(os.sep) + os.sep)
+
+    return any(under(a) for a in allowed) and not any(under(b) for b in blocked)
+
+
+def _norm(q, real=True) -> str:
+    """real=True：realpath（解掉 ..、反斜線、junction／symlink）再 normcase（Windows 不分大小寫）。
+    real=False：abspath（只消 ..、不解連結）再 normcase——projects/ 底下的 junction 要用這個看「名義上的位置」。"""
+    q = str(q)
+    return os.path.normcase(os.path.realpath(q) if real else os.path.abspath(q))
+
+
+def _under(p: str, root: str) -> bool:
+    """兩個都是 _norm 過的路徑：p 是不是 root 本身或在 root 底下。"""
+    return p == root or p.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def _project_privacy(real=True):
+    """讀磁碟上每個專案的 card.json：回 ({正規化專案資料夾: 是否公開}, 公開專案的來源夾, 非公開專案的來源夾)。
+    card.json 讀不到／壞掉的資料夾一律當非公開（fail-closed）。每次呼叫都重讀，站主新建或改公開狀態立即生效。
+    real 傳給 _norm：realpath 與 abspath 兩種正規化各算一份，_private_file 兩邊都比。"""
+    dirs, pub_srcs, priv_srcs = {}, [], []
+    for d in (sorted(store.PROJECTS.iterdir()) if store.PROJECTS.exists() else []):
+        if not d.is_dir():
+            continue
+        try:
+            card = json.loads((d / "card.json").read_text(encoding="utf-8"))
+        except Exception:
+            card = None
+        public = store.is_public(card)
+        try:
+            dirs[_norm(d, real)] = public
+            src = (card or {}).get("source_folder") or ""
+            if src:
+                (pub_srcs if public else priv_srcs).append(_norm(src, real))
+        except (OSError, ValueError):
+            continue
+    return dirs, pub_srcs, priv_srcs
+
+
+def _private_file(path: str) -> bool:
+    """/gradio_api/file= 要的檔，訪客（public_locked）能不能拿。私有＝下列任一：
+    - 匯出結果（exports/）或訓練輸出（projects/<專案>/runs/）
+    - 位在非公開專案的資料夾（projects/<slug>/：card.json、labels.json、edited/…）裡，或 projects/ 底下不屬於任何專案的位置
+    - 位在某個非公開專案的來源資料夾裡、又不在任何公開專案的來源資料夾裡（審查 SL-3：正式站 allowed 是整個 repo 根）
+    先 realpath 去掉 ..，再 normcase（Windows 不分大小寫，EXPORTS 也算）；解析不了就當私有。"""
+    # realpath（解連結後的實際位置）與 abspath（名義位置，例如 projects/ 底下指到別處的 junction）都判一次，
+    # 任一邊判私有就擋（審查 SL-3 第二次退回）。
+    return _private_norm(path, True) or _private_norm(path, False)
+
+
+def _private_norm(path, real: bool) -> bool:
+    try:
+        p = _norm(path, real)
+        exports, projects = _norm(store.DATA_ROOT / "exports", real), _norm(store.PROJECTS, real)
+    except (OSError, ValueError, TypeError):
         return True
-    norm = lambda q: os.path.normcase(os.path.realpath(q))
-    exports, projects = norm(store.DATA_ROOT / "exports"), norm(store.PROJECTS)
-    if p == exports or p.startswith(exports + os.sep):
+    # NTFS 串流語法（card.json::$DATA、exports::$INDEX_ALLOCATION）或路徑中間的冒號：正常檔名不會有，一律當私有
+    if ":" in os.path.splitdrive(p)[1]:
         return True
-    if p.startswith(projects + os.sep):
-        parts = p[len(projects) + 1:].split(os.sep)
-        return len(parts) > 1 and parts[1] == os.path.normcase("runs")
-    return False
+    if _under(p, exports):
+        return True
+    dirs, pub_srcs, priv_srcs = _project_privacy(real)
+    if _under(p, projects):
+        if p == projects:
+            return True
+        parts = p[len(projects.rstrip(os.sep)) + 1:].split(os.sep)
+        if len(parts) > 1 and parts[1] == os.path.normcase("runs"):
+            return True
+        pdir = projects.rstrip(os.sep) + os.sep + parts[0]
+        if not dirs.get(pdir, False):          # 非公開專案，或不是任何專案的資料夾
+            return True
+    in_private = any(_under(p, src) for src in priv_srcs)
+    in_public = any(_under(p, src) for src in pub_srcs)
+    return in_private and not in_public
 
 
 def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **ov):
+    global _SERVE_PATHS
     allowed, blocked = _file_access_paths()
+    _SERVE_PATHS = (list(allowed), list(blocked))     # handler 端的 _servable 跟 Gradio 用同一份
     # 匿名上傳會往伺服器暫存夾寫檔（吃本機硬碟）；公開站限制單檔大小並定期清快取。
     max_file_size = os.environ.get("SCOPELAB_MAX_UPLOAD_MB")
     max_file_size = f"{int(max_file_size)}mb" if (max_file_size or "").strip().isdigit() else ("25mb" if store.PUBLIC else None)
@@ -1665,11 +1821,13 @@ def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **o
         from fastapi import FastAPI
         fastapi_app = FastAPI()
         auth.add_auth_routes(fastapi_app)
-        auth.add_upload_guard(fastapi_app)   # 公開站：非站主不得 POST /gradio_api/upload（防匿名塞爆硬碟）
+        auth.add_upload_guard(fastapi_app)   # 公開站：非站主不得 POST upload／process_recording 等（防匿名寫檔、起 ffmpeg）
         auth.add_file_guard(fastapi_app, _private_file)   # 公開站：匯出結果與訓練權重只給站主
+        auth.add_web_guards(fastapi_app)     # 最外層：防框架標頭、拿掉非同源 ACAO／ACAC、非同源寫入 403（審查 GA-3／GA-8）
+        # show_error=False：非預期例外內文（常含伺服器路徑）不回給瀏覽器；gr.Error 的訊息照常顯示（審查 GA-10）
         mounted = gr.mount_gradio_app(fastapi_app, demo, path="/", allowed_paths=allowed,
                                       blocked_paths=blocked, max_file_size=max_file_size,
-                                      theme=THEME, css=CSS, show_error=True)
+                                      theme=THEME, css=CSS, show_error=False)
         server = uvicorn.Server(uvicorn.Config(mounted, host="127.0.0.1", port=port, log_level="warning"))
         if prevent_thread_lock:
             import threading
@@ -1680,11 +1838,10 @@ def launch_app(prevent_thread_lock=False, inbrowser=False, server_port=None, **o
     # delete_cache 已設在 demo 上（Blocks.launch 不收這個參數，傳了會 TypeError，桌面／開發模式整個起不來）
     kw = dict(theme=THEME, css=CSS, allowed_paths=allowed, blocked_paths=blocked,
               prevent_thread_lock=prevent_thread_lock, inbrowser=inbrowser)
-    if not store.PUBLIC:
-        # 桌面／開發：人人是站主、allowed_paths 是各磁碟根 ⇒ 只服務本機，經 tunnel 進來的一律 403（審查 GA-1）。
-        # 這一行要跟上面拿掉 delete_cache 一起上：修好崩潰而沒有這道防線，非公開實例一落在 tunnel 埠就公開整碟。
-        from starlette.middleware import Middleware
-        kw["app_kwargs"] = {"middleware": [Middleware(auth.LocalOnlyMiddleware)]}
+    # 桌面／開發：人人是站主、allowed_paths 是各磁碟根 ⇒ 只服務本機，經 tunnel 進來的一律 403（審查 GA-1）。
+    # 這一行要跟上面拿掉 delete_cache 一起上：修好崩潰而沒有這道防線，非公開實例一落在 tunnel 埠就公開整碟。
+    # LocalOnlyMiddleware 在最外層，其後才是防框架標頭與同源寫入防線（審查 GA-3／GA-8）。
+    kw["app_kwargs"] = {"middleware": auth.launch_middleware(local_only=not store.PUBLIC)}
     if max_file_size:
         kw["max_file_size"] = max_file_size
     if basic_auth:

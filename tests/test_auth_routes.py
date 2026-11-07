@@ -42,3 +42,19 @@ def test_logout_same_origin_ok(client):
 def test_logout_no_origin_ok(client):
     r = client.post("/auth/logout")
     assert r.status_code == 200
+
+
+def test_google_error_detail_not_leaked(client, monkeypatch):
+    """例外內文（預期的 client id、時鐘差、伺服器路徑）只記在伺服器端，回應只給通用訊息（審查 GA-10）。"""
+    def boom(_cred):
+        raise ValueError("Token has wrong audience secret-client-id.apps, expected D:/Claude code/x")
+    monkeypatch.setattr(auth, "verify_google_credential", boom)
+    r = client.post("/auth/google", json={"credential": "x.y.z"})
+    assert r.status_code == 401
+    assert r.json() == {"error": "invalid credential"}
+    assert "secret-client-id" not in r.text and "Claude code" not in r.text
+
+
+def test_public_mount_hides_unexpected_error_detail(server):
+    """mount_gradio_app 用 show_error=False：非預期例外內文不回給瀏覽器（gr.Error 照常顯示）。"""
+    assert server.blocks.show_error is False

@@ -79,6 +79,19 @@ def test_train_rejected_for_guest(server, engines, who):
     assert engines == []
 
 
+@pytest.mark.parametrize("who", GUESTS)
+def test_detect_device_rejected_for_guest(server, engines, who):
+    """「偵測裝置」會 import torch＋建 CUDA context：訪客直接打 API 也不得進到 pick_device。"""
+    server.call("build_train_tab.<locals>.on_detect", [], cookies=_cookies(who))
+    assert engines == []
+
+
+def test_detect_device_runs_for_owner(server, engines):
+    ok, out = server.call("build_train_tab.<locals>.on_detect", [], cookies=owner_cookies())
+    assert ok, out
+    assert "pick_device" in engines
+
+
 def test_train_runs_for_owner(server, engines):
     ok, out = server.call("build_train_tab.<locals>.on_train", [SLUG, "fast"], cookies=owner_cookies())
     assert ok, out
@@ -133,6 +146,14 @@ def test_save_sorted_rejected_for_guest(server):
 @pytest.mark.parametrize("who", GUESTS)
 def test_delete_rejected_for_guest(server, who):
     ok, _ = server.call("on_del_confirm", [SLUG, None], cookies=_cookies(who))
+    assert not ok
+    assert (DATA / "projects" / SLUG / "card.json").is_file()
+
+
+def test_delete_rejected_for_owner_in_preview(server):
+    """站主取消「本地模式」＝預覽訪客：刪除跟存檔／匯出／訓練一樣被擋（審查 SL-6）。"""
+    auth.set_local_mode(False)
+    ok, _ = server.call("on_del_confirm", [SLUG, None], cookies=owner_cookies())
     assert not ok
     assert (DATA / "projects" / SLUG / "card.json").is_file()
 

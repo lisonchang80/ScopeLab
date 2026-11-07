@@ -58,7 +58,7 @@ def make_cls():
         "task": "cls", "classes": [ZH[s] for s in SHAPES],
         "author": "ScopeLab", "version": "0.1.0", "license": "CC0",
         "description": "內建示範資料：幾何形狀三分類，用來展示標註流程與全螢幕編輯器。",
-        "source_folder": str(out), "created": "2026-06-22", "updated": "2026-06-22",
+        "source_folder": str(out), "public": True, "created": "2026-06-22", "updated": "2026-06-22",
     }
     (proj / "card.json").write_text(json.dumps(card, ensure_ascii=False, indent=2), encoding="utf-8")
     # 標好 2/3，剩 1/3 留待分類
@@ -115,7 +115,7 @@ def make_det():
         "author": "ScopeLab", "version": "0.1.0", "license": "CC0",
         "description": "內建偵測示範：每張影像散佈多個形狀，逐一畫框標出，"
                        "展示全螢幕標註器與 YOLO/COCO 多框匯出。",
-        "source_folder": str(out), "created": "2026-06-22", "updated": "2026-06-24",
+        "source_folder": str(out), "public": True, "created": "2026-06-22", "updated": "2026-06-24",
     }
     (proj / "card.json").write_text(json.dumps(card, ensure_ascii=False, indent=2), encoding="utf-8")
     (proj / "labels.json").write_text(
