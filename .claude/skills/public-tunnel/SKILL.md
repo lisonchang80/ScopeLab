@@ -24,7 +24,7 @@ description: 維護/部署 ScopeLab 公開網址 scopelab.tinghaochang.com(Cloud
 | 要做的事 | 怎麼做 |
 |---|---|
 | **改了 app.py 要套用到公開站**(版面/CSS/JS) | `packaging\autostart\restart_server.bat`(只重啟 7861、tunnel 不動)。**在 session 內由 Claude 重啟需 detached**:`Start-Process wscript.exe -ArgumentList '"<Startup\scopelab_public.vbs>"'`(VBS 須**純 ASCII**,含中文存 UTF-8 會被 wscript 當 ANSI 解析失敗而靜默不啟動)。 |
-| **502 Bad gateway / Host Error**(換網路、睡醒後) | `packaging\autostart\restart_tunnel.bat`(重啟**共用** tunnel)。根因:cloudflared 連線卡舊網路;本機 7861 仍 200。**注意:同時重啟 clinscope/gis**。 |
+| **502 Bad gateway / Host Error**(換網路、睡醒後) | `packaging\autostart\restart_tunnel.bat`(重啟**共用** tunnel)。根因:cloudflared 連線卡舊網路;本機 7861 仍 200。**注意:共用 tunnel 上的站(gis/harnesshub/根網域,clinscope 有開時也算)會一起斷約 10 秒**;腳本只關命令列含共用 tunnel UUID 或 `.cloudflared\config.yml` 的那支 cloudflared,同一台的其他 tunnel(例如 YouTubeUpload 用自己 `--config` 起的媒體 tunnel)不受影響——**不要改回 `taskkill /IM cloudflared.exe`**。 |
 | **錯誤 1033 / Cloudflare 隧道錯誤頁**(≠502) | DNS 指向 Cloudflare 但**沒有 cloudflared 連上**——通常 cloudflared 程序整個不在了(長閒置被系統回收、或重開機後自啟沒成功)。跑 `restart_tunnel.bat` 重起共用 tunnel;若連 7861 server 也死,先 `restart_server.bat`(或跑 Startup 的 scopelab_public.vbs)。判別見「確認本機健康」。 |
 | **手動開公開站(server 部分)** | `packaging\autostart\start_public.bat`(可見視窗,好看 log;只起 7861 server) |
 | **停掉 ScopeLab server** | 工作管理員結束佔 7861 的 `python.exe`;或刪 Startup 的 `scopelab_public.vbs` 取消自啟(不影響 clinscope/gis) |

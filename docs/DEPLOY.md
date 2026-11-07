@@ -72,7 +72,7 @@ cloudflared tunnel route dns tinghaochang-sites scopelab.tinghaochang.com
 | 要做的事 | 怎麼做 |
 |---|---|
 | 改了 app.py 要套用到公開站 | `packaging\autostart\restart_server.bat`（只重啟 7861，tunnel 不動） |
-| 502 / 1033（換網路、長閒置、隧道死） | `packaging\autostart\restart_tunnel.bat`（重啟**共用** tunnel，同時救 clinscope/scopelab/gis） |
+| 502 / 1033（換網路、長閒置、隧道死） | `packaging\autostart\restart_tunnel.bat`（重啟**共用** tunnel，同時救共用 tunnel 上的所有站；只關共用 tunnel 那支 cloudflared，同一台用自己 `--config` 起的其他 tunnel 不受影響） |
 | 確認本機健康 | `Get-NetTCPConnection -LocalPort 7861 -State Listen`、`Invoke-WebRequest http://127.0.0.1:7861`（應 200） |
 | 確認 Access 守門 | `curl.exe -s -o NUL -w "%{http_code}" https://scopelab.tinghaochang.com` → **302**=正常導登入 |
 | 收緊檔案曝險 | 公開站固定白名單 `projects/`、`exports/`、`samples/`、`static/`＋安裝檔；`SCOPELAB_ALLOWED_PATHS` 涵蓋 repo 根／家目錄的項目會被剔除（autostart 目前設的 repo 根會印警告後忽略） |
